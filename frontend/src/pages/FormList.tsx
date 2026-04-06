@@ -1,7 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Eye, Pencil, QrCode, Rocket, Trash2, BarChart3, Plus } from "lucide-react";
-import { api } from "../api";
+import { api, apiBaseUrl } from "../api";
 import { BrandLogo } from "../components/BrandLogo";
 
 type Row = {
@@ -137,7 +137,7 @@ export default function FormList() {
           <div className="card" style={{ width: 350 }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ marginTop: 0 }}>{qrForm.title}</h3>
             <div className="badge" style={{ marginBottom: 8 }}>Form No: FRM-{qrForm.id.slice(-6).toUpperCase()}</div>
-            <img src={`${import.meta.env.VITE_API_URL}/api/forms/${qrForm.id}/qr?format=png`} alt="qr" style={{ width: 290, height: 290, display: "block", margin: "0 auto", background: "#fff", padding: 8 }} />
+            <img src={`${apiBaseUrl}/api/forms/${qrForm.id}/qr?format=png`} alt="qr" style={{ width: 290, height: 290, display: "block", margin: "0 auto", background: "#fff", padding: 8 }} />
             <button className="btn" style={{ width: "100%", marginTop: "0.8rem" }} type="button" onClick={() => setQrForm(null)}><Eye size={15} /> Kapat</button>
           </div>
         </div>

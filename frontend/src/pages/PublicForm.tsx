@@ -287,7 +287,6 @@ export default function PublicForm() {
                                       type="radio" 
                                       name={`${q.id}_${r.id}`} 
                                       style={{ transform: "scale(1.3)", cursor: "pointer" }} 
-                                      required={q.required && !answers[q.id]?.[r.id]} 
                                       checked={answers[q.id]?.[r.id] === o.id} 
                                       onChange={() => setAnswers(a => ({ ...a, [q.id]: { ...(a[q.id] || {}), [r.id]: o.id } }))} 
                                     />

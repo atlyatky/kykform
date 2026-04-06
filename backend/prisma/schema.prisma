@@ -37,6 +37,10 @@ model Form {
   
   lastPeriodicNotifyAt DateTime?
   invalidAlertEnabled  Boolean        @default(false)
+  /// Örn. forklift no — bu sorunun cevabına göre kota sayılır (boş = tüm forma toplam kota)
+  quotaQuestionId      String?
+  /// Beklenen varlık listesi JSON: ["FL-01","FL-02"]. Boşsa yalnızca gelen cevaplara göre kontrol
+  quotaEntityListJson  String         @default("[]")
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
   questions            Question[]

@@ -1,4 +1,6 @@
-const base = import.meta.env.VITE_API_URL?.replace(/\/$/, "") || "";
+/** Boş = aynı origin (nginx /api proxy). Dolu = doğrudan API kökü (örn. http://host:4001) */
+export const apiBaseUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, "") || "";
+const base = apiBaseUrl;
 
 export function getToken() {
   return localStorage.getItem("kyk_token");
@@ -36,6 +38,36 @@ export async function api<T>(
   return res.json() as Promise<T>;
 }
 
+/** Dış paylaşım kökü (örn. https://form.sirket.com). Boş = mevcut site (window.location.origin). */
+const publicBase =
+  (import.meta.env.VITE_PUBLIC_FORM_BASE_URL as string | undefined)?.replace(/\/$/, "") || "";
+
 export function publicFormUrl(slug: string) {
-  return `${window.location.origin}/f/${slug}`;
+  const base = publicBase || window.location.origin;
+  return `${base}/f/${slug}`;
+}
+
+/** HTTP veya izin kısıtında panoya yazmak için (clipboard API yoksa textarea fallback). */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fallback */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
 }

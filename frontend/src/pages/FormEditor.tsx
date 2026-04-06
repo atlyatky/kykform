@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Plus, Palette, Settings2, Trash2, ArrowUp, ArrowDown, Type, AlignLeft, CheckSquare, List, Hash, Calendar, FileText, Grid, Check, SplitSquareHorizontal, ChevronLeft, Save, Eye } from "lucide-react";
 import { BrandLogo } from "../components/BrandLogo";
-import { api, publicFormUrl } from "../api";
+import { api, copyTextToClipboard, publicFormUrl } from "../api";
 
 type Opt = { id: string; label: string; parentOptionIds?: string[]; score?: number };
 type Row = { id: string; label: string };
@@ -12,6 +12,7 @@ type Q = { id?: string; type: QType; title: string; description?: string | null;
 type FormPayload = {
   id: string; title: string; slug: string; published: boolean; revision: number; description: string | null;
   periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR"; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; notifyEmails: string[];
+  quotaQuestionId: string | null; quotaEntities: string[];
   questions: Array<{ id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: Q["showWhen"] }>;
 };
 
@@ -60,17 +61,27 @@ export default function FormEditor() {
 
   const [meta, setMeta] = useState<Omit<FormPayload, "questions">>({
     id: "", title: "", slug: "", published: false, revision: 1, description: "",
-    periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false, notifyEmails: []
+    periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false, notifyEmails: [],
+    quotaQuestionId: null, quotaEntities: [],
   });
   const [questions, setQuestions] = useState<Q[]>([]);
   const [selectedQIndex, setSelectedQIndex] = useState<number | null>(null);
   const [openOptionLogic, setOpenOptionLogic] = useState<string | null>(null);
+  /** Kota varlık listesi — textarea için dizi yerine metin (imleç sıçramasını önler) */
+  const [quotaDraft, setQuotaDraft] = useState("");
 
   useEffect(() => {
     if (!id) return;
     api<FormPayload>(`/api/forms/${id}`).then(d => {
-      const { questions: qs, ...m } = d;
-      setMeta(m);
+      const { questions: qs, ...rest } = d;
+      const qe = Array.isArray(d.quotaEntities) ? d.quotaEntities : [];
+      setMeta({
+        ...rest,
+        quotaQuestionId: d.quotaQuestionId ?? null,
+        quotaEntities: qe,
+        notifyEmails: Array.isArray(d.notifyEmails) ? d.notifyEmails : [],
+      });
+      setQuotaDraft(qe.join("\n"));
       setQuestions(qs);
       if (qs.length > 0) setSelectedQIndex(0);
     }).finally(() => setLoading(false));
@@ -80,7 +91,8 @@ export default function FormEditor() {
     if (!id) return;
     setSaving(true); setMsg("");
     try {
-      await api(`/api/forms/${id}`, { method: "PATCH", body: JSON.stringify(meta) });
+      const quotaEntities = quotaDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      await api(`/api/forms/${id}`, { method: "PATCH", body: JSON.stringify({ ...meta, quotaEntities }) });
       await api(`/api/forms/${id}/questions`, { method: "PUT", body: JSON.stringify(questions) });
       setMsg("Değişiklikler kaydedildi.");
       setTimeout(() => setMsg(""), 3000);
@@ -143,7 +155,7 @@ export default function FormEditor() {
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
           {msg && <span style={{ color: "var(--success)", fontSize: "0.9rem", fontWeight: 500, marginRight: "1rem" }}>{msg}</span>}
           
-          <button className="btn btn-ghost" onClick={() => { navigator.clipboard.writeText(publicFormUrl(meta.slug)); alert("Form linki kopyalandı!"); }} style={{ padding: "0.5rem 1rem", fontSize: "0.9rem", color: "var(--primary)" }}>
+          <button className="btn btn-ghost" onClick={() => void copyTextToClipboard(publicFormUrl(meta.slug)).then((ok) => alert(ok ? "Form linki kopyalandı." : "Kopyalanamadı; linki elle seçip kopyalayın."))} style={{ padding: "0.5rem 1rem", fontSize: "0.9rem", color: "var(--primary)" }}>
             Link Kopyala
           </button>
           
@@ -190,7 +202,7 @@ export default function FormEditor() {
                 <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 600, color: "var(--primary)", fontSize: "0.9rem" }}>Form Paylaşım Linki</label>
                 <div style={{ display: "flex", gap: "0.5rem" }}>
                   <input className="input" readOnly value={publicFormUrl(meta.slug)} style={{ flex: 1, fontSize: "0.85rem", background: "var(--surface)", padding: "0.4rem 0.6rem" }} />
-                  <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(publicFormUrl(meta.slug)); alert("Link kopyalandı!"); }} style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>Kopyala</button>
+                  <button className="btn btn-primary" onClick={() => void copyTextToClipboard(publicFormUrl(meta.slug)).then((ok) => alert(ok ? "Link kopyalandı." : "Kopyalanamadı."))} style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>Kopyala</button>
                 </div>
               </div>
 
@@ -215,11 +227,66 @@ export default function FormEditor() {
                 </div>
               </div>
               {meta.periodUnit !== "NONE" && (
-                <div style={{ marginBottom: "1rem" }}>
-                  <label>Beklenen Yanıt Sayısı (Periyot Başına)</label>
-                  <input type="number" className="input" min={1} value={meta.expectedSubmissions} onChange={e => setMeta(m => ({ ...m, expectedSubmissions: parseInt(e.target.value) || 1 }))} />
-                </div>
+                <>
+                  <div style={{ marginBottom: "1rem" }}>
+                    <label>Beklenen yanıt (periyot ve varlık başına)</label>
+                    <input type="number" className="input" min={1} value={meta.expectedSubmissions} onChange={e => setMeta(m => ({ ...m, expectedSubmissions: parseInt(e.target.value) || 1 }))} />
+                    <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.35rem" }}>
+                      Örn. günde 10 kez: periyot = 1 gün, buraya 10. Aşağıda varlık sorusu seçerseniz her forklift (veya numara) için ayrı sayılır.
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: "1rem" }}>
+                    <label>Varlık sorusu (örn. forklift numarası)</label>
+                    <select
+                      className="input"
+                      value={meta.quotaQuestionId ?? ""}
+                      onChange={(e) => setMeta((m) => ({ ...m, quotaQuestionId: e.target.value || null }))}
+                    >
+                      <option value="">— Yok (toplam forma göre kota) —</option>
+                      {questions
+                        .filter((q) => !!q.id && (q.type === "TEXT" || q.type === "SINGLE_CHOICE" || q.type === "NUMBER"))
+                        .map((q) => (
+                          <option key={q.id} value={q.id}>
+                            {(q.title || "İsimsiz").slice(0, 60)}
+                          </option>
+                        ))}
+                    </select>
+                    <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.35rem" }}>
+                      Önce kaydedin; soru ID’si oluşunca listede görünür. Kota, bu sorunun cevabına göre gruplanır.
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: "1rem" }}>
+                    <label>Beklenen varlık listesi (isteğe bağlı, satır satır)</label>
+                    <textarea
+                      className="input"
+                      rows={4}
+                      placeholder={"FL-01\nFL-02\nFL-03"}
+                      value={quotaDraft}
+                      onChange={(e) => setQuotaDraft(e.target.value)}
+                    />
+                    <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.35rem" }}>
+                      Doluysa yalnız bu numaralar kontrol edilir; boşsa gönderilen cevaplardaki her varlık için kota uygulanır.
+                    </div>
+                  </div>
+                </>
               )}
+              <div style={{ marginBottom: "1rem" }}>
+                <label>Bildirim e-postaları (virgülle)</label>
+                <input
+                  className="input"
+                  placeholder="kisi@firma.com, diger@firma.com"
+                  value={meta.notifyEmails.join(", ")}
+                  onChange={(e) =>
+                    setMeta((m) => ({
+                      ...m,
+                      notifyEmails: e.target.value
+                        .split(/[,;\n]+/)
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    }))
+                  }
+                />
+              </div>
             </div>
           )}
         </div>

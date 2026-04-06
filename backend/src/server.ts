@@ -3,14 +3,17 @@ import express from "express";
 import { nanoid } from "nanoid";
 import QRCode from "qrcode";
 import { z } from "zod";
+import { adminNetworkGuard, parseAdminAllowlist } from "./adminNetwork.js";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth.js";
 import { sendMail } from "./mail.js";
 import { prisma } from "./prisma.js";
 import { runSlaCheckOnce } from "./sla.js";
 
 const app = express();
+app.set("trust proxy", true);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
+app.use(adminNetworkGuard(parseAdminAllowlist(process.env.ADMIN_IP_ALLOWLIST)));
 
 const publicBase = process.env.PUBLIC_FORM_BASE_URL ?? "http://localhost:5173";
 
@@ -21,6 +24,7 @@ function authMiddleware(req: express.Request, _res: express.Response, next: expr
 }
 
 const optionSchema = z.object({ id: z.string(), label: z.string(), parentOptionIds: z.array(z.string()).optional(), score: z.number().optional() });
+const rowSchema = z.object({ id: z.string(), label: z.string() });
 const showWhenSchema = z.object({ questionId: z.string(), optionIds: z.array(z.string()) }).nullable().optional();
 const questionInputSchema = z.object({
   id: z.string().optional(),
@@ -29,6 +33,7 @@ const questionInputSchema = z.object({
   description: z.string().nullable().optional(),
   required: z.boolean().optional(),
   options: z.array(optionSchema).optional(),
+  rows: z.array(rowSchema).optional(),
   showWhen: showWhenSchema,
 });
 
@@ -97,10 +102,20 @@ app.post("/api/forms", authMiddleware, async (req, res) => {
   res.status(201).json({ id: form.id, slug: form.slug });
 });
 
+function parseQuotaEntities(json: string): string[] {
+  try {
+    const a = JSON.parse(json) as unknown;
+    return Array.isArray(a) ? a.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function serializeForm(form: {
   id: string; title: string; description: string | null; slug: string; published: boolean; revision: number;
   periodUnit: string; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; slaHours: number | null; notifyEmails: string;
-  questions: Array<{ id: string; type: string; title: string; description: string | null; required: boolean; optionsJson: string; showWhenJson: string | null; orderIndex: number }>;
+  quotaQuestionId: string | null; quotaEntityListJson: string;
+  questions: Array<{ id: string; type: string; title: string; description: string | null; required: boolean; optionsJson: string; rowsJson: string | null; showWhenJson: string | null; orderIndex: number }>;
 }) {
   return {
     id: form.id,
@@ -115,12 +130,15 @@ function serializeForm(form: {
     invalidAlertEnabled: form.invalidAlertEnabled,
     slaHours: form.slaHours,
     notifyEmails: parseEmails(form.notifyEmails),
+    quotaQuestionId: form.quotaQuestionId,
+    quotaEntities: parseQuotaEntities(form.quotaEntityListJson),
     questions: form.questions.map((q) => ({
       id: q.id,
       type: q.type,
       title: q.title, description: q.description,
       required: q.required,
       options: JSON.parse(q.optionsJson || "[]") as Array<{ id: string; label: string; parentOptionIds?: string[]; score?: number }>,
+      rows: JSON.parse(q.rowsJson || "[]") as Array<{ id: string; label: string }>,
       showWhen: q.showWhenJson ? (JSON.parse(q.showWhenJson) as { questionId: string; optionIds: string[] }) : null,
       orderIndex: q.orderIndex,
     })),
@@ -144,6 +162,8 @@ app.patch("/api/forms/:id", authMiddleware, async (req, res) => {
     periodValue: z.number().int().min(1).optional(),
     expectedSubmissions: z.number().int().min(1).optional(),
     invalidAlertEnabled: z.boolean().optional(),
+    quotaQuestionId: z.string().nullable().optional(),
+    quotaEntities: z.array(z.string()).optional(),
   }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
   const data: Record<string, unknown> = { revision: { increment: 1 } };
@@ -156,6 +176,8 @@ app.patch("/api/forms/:id", authMiddleware, async (req, res) => {
   if (body.data.periodValue !== undefined) data.periodValue = body.data.periodValue;
   if (body.data.expectedSubmissions !== undefined) data.expectedSubmissions = body.data.expectedSubmissions;
   if (body.data.invalidAlertEnabled !== undefined) data.invalidAlertEnabled = body.data.invalidAlertEnabled;
+  if (body.data.quotaQuestionId !== undefined) data.quotaQuestionId = body.data.quotaQuestionId;
+  if (body.data.quotaEntities !== undefined) data.quotaEntityListJson = JSON.stringify(body.data.quotaEntities);
 
   try {
     const form = await prisma.form.update({ where: { id: req.params.id }, data });
@@ -180,8 +202,10 @@ app.put("/api/forms/:id/questions", authMiddleware, async (req, res) => {
     let order = 0;
     for (const q of parsed.data) {
       const common = {
-        orderIndex: order++, type: q.type, title: q.title, description: q.description, required: q.required ?? false,
-        optionsJson: JSON.stringify(q.options ?? []), showWhenJson: q.showWhen ? JSON.stringify(q.showWhen) : null,
+        orderIndex: order++, type: q.type, title: q.title, description: q.description ?? null, required: q.required ?? false,
+        optionsJson: JSON.stringify(q.options ?? []),
+        rowsJson: JSON.stringify(q.rows ?? []),
+        showWhenJson: q.showWhen ? JSON.stringify(q.showWhen) : null,
       };
       if (q.id && existingSet.has(q.id)) {
         await tx.question.update({ where: { id: q.id }, data: common });
@@ -288,6 +312,15 @@ app.post("/api/public/forms/:slug/submit", async (req, res) => {
   for (const q of form.questions) {
     if (!q.required) continue;
     const v = answers[q.id];
+    if (q.type === "GRID") {
+      const rows = JSON.parse(q.rowsJson || "[]") as Array<{ id: string; label: string }>;
+      const rowObj = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+      for (const r of rows) {
+        const cell = rowObj[r.id];
+        if (cell === undefined || cell === null || cell === "") invalidReasons.push(`Zorunlu matris: ${q.title} (${r.label})`);
+      }
+      continue;
+    }
     if (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)) invalidReasons.push(`Zorunlu soru bos: ${q.title}`);
   }
 
