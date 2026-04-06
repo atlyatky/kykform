@@ -3,7 +3,6 @@ import express from "express";
 import { nanoid } from "nanoid";
 import QRCode from "qrcode";
 import { z } from "zod";
-import { adminNetworkGuard, parseAdminAllowlist } from "./adminNetwork.js";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth.js";
 import { sendMail } from "./mail.js";
 import { prisma } from "./prisma.js";
@@ -13,7 +12,8 @@ const app = express();
 app.set("trust proxy", true);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
-app.use(adminNetworkGuard(parseAdminAllowlist(process.env.ADMIN_IP_ALLOWLIST)));
+// IP kısıtı (adminNetwork.ts) Docker arkasında yanlış IP görüp sürekli 403 verdiği için kapalı.
+// Gerekirse ters vekil / güvenlik duvarı ile sınırlandırın.
 
 const publicBase = process.env.PUBLIC_FORM_BASE_URL ?? "http://localhost:5173";
 

@@ -29,8 +29,6 @@ services:
       PORT: 4000
       NODE_ENV: production
       PUBLIC_FORM_BASE_URL: ${PUBLIC_FORM_BASE_URL:-http://localhost:5174}
-      # Boş = kısıtlama yok. Yanlış ayarlarsanız yönetimde Forbidden olur.
-      ADMIN_IP_ALLOWLIST: ${ADMIN_IP_ALLOWLIST:-}
       MAIL_HOST: ${MAIL_HOST:-mailhog}
       MAIL_PORT: ${MAIL_PORT:-1025}
       MAIL_FROM: ${MAIL_FROM:-forms@kyk.local}
