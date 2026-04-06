@@ -203,7 +203,7 @@ app.put("/api/forms/:id/questions", authMiddleware, async (req, res) => {
 app.delete("/api/forms/:id", authMiddleware, async (req, res) => {
   try {
     await prisma.form.delete({ where: { id: req.params.id } });
-    res.json({ ok: true, score: hasScoring ? totalScore : null });
+    res.json({ ok: true });
   } catch {
     res.status(404).json({ error: "Bulunamadı" });
   }
@@ -259,7 +259,7 @@ app.get("/api/forms/:id/stats", authMiddleware, async (req, res) => {
 });
 
 app.get("/api/public/forms/:slug", async (req, res) => {
-  const form = await prisma.form.findFirst({ where: { slug: req.params.slug, published: true }, include: { questions: { orderBy: { orderIndex: "asc" } } } });
+  const form = await prisma.form.findFirst({ where: { slug: req.params.slug }, include: { questions: { orderBy: { orderIndex: "asc" } } } });
   if (!form) return res.status(404).json({ error: "Form bulunamadı" });
   res.json(serializeForm(form));
 });
@@ -267,7 +267,7 @@ app.get("/api/public/forms/:slug", async (req, res) => {
 app.post("/api/public/forms/:slug/session", async (req, res) => {
   const body = z.object({ sessionKey: z.string().min(8).max(200) }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "sessionKey gerekli" });
-  const form = await prisma.form.findFirst({ where: { slug: req.params.slug, published: true } });
+  const form = await prisma.form.findFirst({ where: { slug: req.params.slug } });
   if (!form) return res.status(404).json({ error: "Form bulunamadı" });
   await prisma.formSession.upsert({
     where: { formId_sessionKey: { formId: form.id, sessionKey: body.data.sessionKey } },
@@ -280,7 +280,7 @@ app.post("/api/public/forms/:slug/submit", async (req, res) => {
   const body = z.object({ sessionKey: z.string().min(8).max(200), answers: z.record(z.string(), z.any()) }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz gönderim" });
 
-  const form = await prisma.form.findFirst({ where: { slug: req.params.slug, published: true }, include: { questions: true } });
+  const form = await prisma.form.findFirst({ where: { slug: req.params.slug }, include: { questions: true } });
   if (!form) return res.status(404).json({ error: "Form bulunamadı" });
 
   const answers = body.data.answers;

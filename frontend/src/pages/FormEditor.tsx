@@ -15,8 +15,13 @@ type FormPayload = {
   questions: Array<{ id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: Q["showWhen"] }>;
 };
 
-function newOpt(): Opt { return { id: crypto.randomUUID(), label: "" }; }
-function newRow(): Row { return { id: crypto.randomUUID(), label: "" }; }
+function createId() {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `id-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+function newOpt(): Opt { return { id: createId(), label: "" }; }
+function newRow(): Row { return { id: createId(), label: "" }; }
 function newQuestion(type: QType = "TEXT"): Q { return { type, title: type === "PAGE_BREAK" ? "Yeni Bölüm / Sayfa" : "", description: "", required: false, options: type === "SINGLE_CHOICE" || type === "MULTI_CHOICE" || type === "GRID" ? [newOpt(), newOpt()] : [], rows: type === "GRID" ? [newRow(), newRow()] : [], showWhen: null }; }
 
 const ICONS: Record<QType, React.ReactNode> = {

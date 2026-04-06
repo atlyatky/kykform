@@ -10,6 +10,34 @@ type QType = "TEXT" | "TEXTAREA" | "SINGLE_CHOICE" | "MULTI_CHOICE" | "NUMBER" |
 type Q = { id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: { questionId: string; optionIds: string[] } | null; };
 type FormPayload = { id: string; title: string; description: string | null; questions: Q[] };
 
+function createId() {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `id-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function normalizeFormPayload(input: FormPayload): FormPayload {
+  return {
+    ...input,
+    questions: (Array.isArray(input.questions) ? input.questions : []).map((q) => ({
+      ...q,
+      options: (Array.isArray(q.options) ? q.options : []).map((o) => ({
+        ...o,
+        parentOptionIds: Array.isArray(o.parentOptionIds)
+          ? o.parentOptionIds
+          : (typeof o.parentOptionIds === "string" && o.parentOptionIds
+              ? [o.parentOptionIds]
+              : undefined),
+      })),
+      rows: Array.isArray(q.rows) ? q.rows : [],
+      showWhen:
+        q.showWhen && Array.isArray(q.showWhen.optionIds)
+          ? q.showWhen
+          : null,
+    })),
+  };
+}
+
 export default function PublicForm() {
   const { slug } = useParams<{ slug: string }>();
   const nav = useNavigate();
@@ -19,7 +47,7 @@ export default function PublicForm() {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
   const [currentPage, setCurrentPage] = useState(0);
-  const sessionKey = useRef(crypto.randomUUID());
+  const sessionKey = useRef(createId());
 
   useEffect(() => {
     if (!slug) return;
@@ -29,7 +57,7 @@ export default function PublicForm() {
       try {
         const f = await api<FormPayload>(`/api/public/forms/${slug}`);
         if (cancel) return;
-        setForm(f);
+        setForm(normalizeFormPayload(f));
         await api(`/api/public/forms/${slug}/session`, { method: "POST", body: JSON.stringify({ sessionKey: sessionKey.current }) });
       } catch { setMsg("Form bulunamadı veya yayında değil."); }
       finally { if (!cancel) setLoading(false); }
@@ -113,38 +141,38 @@ export default function PublicForm() {
   };
 
   return (
-    <div className="layout" style={{ maxWidth: 720, margin: "0 auto", padding: "2rem 1rem 4rem" }}>
+    <div className="layout" style={{ maxWidth: 720, margin: "0 auto", padding: "1rem 1rem 3rem" }}>
       
       <div className="card" style={{ 
         borderTop: "10px solid var(--primary)", 
         borderTopLeftRadius: "12px", 
         borderTopRightRadius: "12px", 
-        marginBottom: "2rem", 
-        padding: "3rem 2rem", 
+        marginBottom: "1rem", 
+        padding: "1.25rem 1.25rem", 
         textAlign: "center", 
         position: "relative", 
         overflow: "hidden",
         boxShadow: "0 8px 30px rgba(23,50,81,0.06)"
       }}>
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "150px", background: "linear-gradient(180deg, var(--surface-soft) 0%, rgba(255,255,255,0) 100%)", zIndex: 0, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "70px", background: "linear-gradient(180deg, var(--surface-soft) 0%, rgba(255,255,255,0) 100%)", zIndex: 0, pointerEvents: "none" }} />
         
         <div style={{ position: "relative", zIndex: 1 }}>
-          <div style={{ display: "inline-block", padding: "0.8rem 1.5rem", background: "var(--surface)", borderRadius: "12px", boxShadow: "0 4px 15px rgba(20,91,168,0.08)", marginBottom: "2rem" }}>
-            <BrandLogo />
+          <div style={{ display: "inline-block", padding: "0.55rem 1rem", background: "var(--surface)", borderRadius: "12px", boxShadow: "0 6px 14px rgba(20,91,168,0.10)", marginBottom: "0.8rem" }}>
+            <BrandLogo height={42} />
           </div>
           
-          <h1 style={{ margin: "0 0 1rem 0", fontSize: "2.2rem", fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+          <h1 style={{ margin: "0 0 0.45rem 0", fontSize: "1.45rem", fontWeight: 800, color: "var(--text)", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
             {form.title}
           </h1>
           
-          <div style={{ display: "flex", justifyContent: "center", gap: "0.5rem", alignItems: "center", marginBottom: form.description ? "1.5rem" : "0" }}>
+          <div style={{ display: "flex", justifyContent: "center", gap: "0.5rem", alignItems: "center", marginBottom: form.description ? "0.6rem" : "0" }}>
             <span className="badge" style={{ fontSize: "0.85rem", padding: "0.4rem 1rem", background: "var(--surface2)", color: "var(--primary)", border: "none", fontWeight: 600 }}>
               Form No: {formNo}
             </span>
           </div>
           
           {form.description && (
-            <div style={{ color: "var(--muted)", fontSize: "1rem", lineHeight: 1.6, maxWidth: "90%", margin: "0 auto" }}>
+            <div style={{ color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45, maxWidth: "95%", margin: "0 auto" }}>
               {form.description}
             </div>
           )}
