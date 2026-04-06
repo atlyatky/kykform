@@ -15,4 +15,6 @@ FROM nginx:alpine
 ARG NGINX_CONFIG=nginx.conf
 COPY ${NGINX_CONFIG} /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
+# nginx worker okuyabilsin (bazı ortamlarda 403 vermemesi için)
+RUN chmod -R a+rX /usr/share/nginx/html
 EXPOSE 80
