@@ -29,12 +29,11 @@ services:
       PORT: 4000
       NODE_ENV: production
       PUBLIC_FORM_BASE_URL: ${PUBLIC_FORM_BASE_URL:-http://localhost:5174}
-      # Boş = kısıtlama yok. Üretimde örnek: 127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
+      # Boş = kısıtlama yok. Yanlış ayarlarsanız yönetimde Forbidden olur.
       ADMIN_IP_ALLOWLIST: ${ADMIN_IP_ALLOWLIST:-}
       MAIL_HOST: ${MAIL_HOST:-mailhog}
       MAIL_PORT: ${MAIL_PORT:-1025}
       MAIL_FROM: ${MAIL_FROM:-forms@kyk.local}
-    # VPS: API'yi doğrudan dışarı açmayın; web nginx /api üzerinden proxy eder.
     ports:
       - "127.0.0.1:4001:4000"
     depends_on:
@@ -43,7 +42,7 @@ services:
       mailhog:
         condition: service_started
 
-  # Tam arayüz (liste, düzenleme, analiz): varsayılan port 8080 (ör. http://SUNUCU:8080)
+  # Tek web imajı: 80 = form doldurma, 8080 = yönetim paneli
   web:
     build:
       context: ./frontend
@@ -51,23 +50,10 @@ services:
       args:
         VITE_API_URL: ""
         VITE_PUBLIC_FORM_BASE_URL: ${VITE_PUBLIC_FORM_BASE_URL:-}
-        NGINX_CONFIG: nginx.conf
-    ports:
-      - "${ADMIN_WEB_PORT:-8080}:80"
-    depends_on:
-      - api
-
-  # İnternet / dış kullanıcı: sadece /f/* ve /api/public/*
-  web-public:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_URL: ""
-        VITE_PUBLIC_FORM_BASE_URL: ${VITE_PUBLIC_FORM_BASE_URL:-}
-        NGINX_CONFIG: nginx-public.conf
+        NGINX_CONFIG: nginx-dual.conf
     ports:
       - "${WEB_PORT:-80}:80"
+      - "${ADMIN_WEB_PORT:-8080}:8080"
     depends_on:
       - api
 
