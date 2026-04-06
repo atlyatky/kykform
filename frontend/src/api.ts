@@ -25,12 +25,20 @@ export async function api<T>(
   }
   const res = await fetch(`${base}${path}`, { ...opts, headers });
   if (!res.ok) {
-    let msg = res.statusText;
-    try {
-      const j = (await res.json()) as { error?: string };
-      if (j.error) msg = j.error;
-    } catch {
-      /* ignore */
+    let msg = res.statusText || "İstek başarısız";
+    const raw = await res.text();
+    if (raw) {
+      try {
+        const j = JSON.parse(raw) as { error?: string };
+        if (typeof j.error === "string" && j.error) msg = j.error;
+      } catch {
+        const t = raw.replace(/\s+/g, " ").trim();
+        if (t.length > 0 && t.length < 400) msg = t;
+      }
+    }
+    if (res.status === 403 && (msg === "Forbidden" || msg === "")) {
+      msg =
+        "Erişim reddedildi (403). Giriş yapın veya sunucuyu güncelleyin (git pull + docker compose up -d --build).";
     }
     throw new Error(msg);
   }

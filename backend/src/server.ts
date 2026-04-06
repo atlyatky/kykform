@@ -46,9 +46,18 @@ function parseEmails(json: string): string[] {
   }
 }
 
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.get("/api/auth/status", async (_req, res) => {
+  const count = await prisma.admin.count();
+  res.json({ canRegister: count === 0 });
+});
+
 app.post("/api/auth/register", async (req, res) => {
   const count = await prisma.admin.count();
-  if (count > 0) return res.status(403).json({ error: "Kayıt kapalı" });
+  if (count > 0) return res.status(400).json({ error: "Kayıt kapalı — zaten yönetici var. Giriş yapın." });
   const body = z.object({ email: z.string().email(), password: z.string().min(6) }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
   const admin = await prisma.admin.create({

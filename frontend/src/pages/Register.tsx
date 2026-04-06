@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, setToken } from "../api";
 
@@ -7,6 +7,13 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const [canRegister, setCanRegister] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api<{ canRegister: boolean }>("/api/auth/status", { auth: false })
+      .then((s) => setCanRegister(s.canRegister))
+      .catch(() => setCanRegister(false));
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,6 +29,20 @@ export default function Register() {
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : "Hata");
     }
+  }
+
+  if (canRegister === false) {
+    return (
+      <div className="layout" style={{ maxWidth: 420 }}>
+        <div className="card">
+          <h1>Kayıt kapalı</h1>
+          <p style={{ color: "var(--muted)" }}>Zaten bir yönetici hesabı tanımlı. Lütfen giriş yapın.</p>
+          <Link to="/login" className="btn btn-primary" style={{ display: "inline-block", marginTop: "1rem" }}>
+            Giriş
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
