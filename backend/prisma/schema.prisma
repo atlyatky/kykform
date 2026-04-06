@@ -46,6 +46,7 @@ model Form {
   questions            Question[]
   submissions          Submission[]
   sessions             FormSession[]
+  flowRules            FormFlowRule[]
 }
 
 enum QuestionType {
@@ -95,4 +96,21 @@ model FormSession {
   slaNotifiedAt DateTime?
 
   @@unique([formId, sessionKey])
+}
+
+model FormFlowRule {
+  id            String   @id @default(cuid())
+  formId        String
+  form          Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  name          String
+  enabled       Boolean  @default(true)
+  /// ON_SCHEDULE | ON_SUBMIT (MVP: ON_SCHEDULE destekli)
+  trigger       String   @default("ON_SCHEDULE")
+  /// JSON: { kind, questionId, periodUnit, periodValue, minCount, entities[] }
+  conditionJson String
+  /// JSON: { kind: "SEND_EMAIL", emails[], subject? }
+  actionJson    String
+  lastFiredAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }

@@ -26,6 +26,27 @@ function authMiddleware(req: express.Request, _res: express.Response, next: expr
 const optionSchema = z.object({ id: z.string(), label: z.string(), parentOptionIds: z.array(z.string()).optional(), score: z.number().optional() });
 const rowSchema = z.object({ id: z.string(), label: z.string() });
 const showWhenSchema = z.object({ questionId: z.string(), optionIds: z.array(z.string()) }).nullable().optional();
+const flowConditionSchema = z.object({
+  kind: z.literal("MISSING_ENTITY_QUOTA"),
+  questionId: z.string(),
+  periodUnit: z.enum(["DAY", "MONTH", "YEAR"]),
+  periodValue: z.number().int().min(1),
+  minCount: z.number().int().min(1),
+  entities: z.array(z.string()).optional(),
+});
+const flowActionSchema = z.object({
+  kind: z.literal("SEND_EMAIL"),
+  emails: z.array(z.string().email()).min(1),
+  subject: z.string().optional(),
+});
+const flowRuleInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1),
+  enabled: z.boolean().optional(),
+  trigger: z.enum(["ON_SCHEDULE", "ON_SUBMIT"]).optional(),
+  condition: flowConditionSchema,
+  action: flowActionSchema,
+});
 const questionInputSchema = z.object({
   id: z.string().optional(),
   type: z.enum(["TEXT", "TEXTAREA", "SINGLE_CHOICE", "MULTI_CHOICE", "NUMBER", "DATE", "FILE", "GRID", "PAGE_BREAK", "AGREEMENT"]),
@@ -194,6 +215,69 @@ app.patch("/api/forms/:id", authMiddleware, async (req, res) => {
   } catch {
     res.status(404).json({ error: "Bulunamadı" });
   }
+});
+
+app.get("/api/forms/:id/flows", authMiddleware, async (req, res) => {
+  const form = await prisma.form.findUnique({ where: { id: req.params.id } });
+  if (!form) return res.status(404).json({ error: "Bulunamadı" });
+  const rules = await prisma.formFlowRule.findMany({ where: { formId: req.params.id }, orderBy: { createdAt: "asc" } });
+  res.json(
+    rules.map((r) => ({
+      id: r.id,
+      name: r.name,
+      enabled: r.enabled,
+      trigger: r.trigger,
+      condition: JSON.parse(r.conditionJson),
+      action: JSON.parse(r.actionJson),
+      lastFiredAt: r.lastFiredAt,
+    }))
+  );
+});
+
+app.put("/api/forms/:id/flows", authMiddleware, async (req, res) => {
+  const parsed = z.array(flowRuleInputSchema).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Geçersiz akış listesi" });
+  const formId = req.params.id;
+  const form = await prisma.form.findUnique({ where: { id: formId } });
+  if (!form) return res.status(404).json({ error: "Bulunamadı" });
+
+  const existing = await prisma.formFlowRule.findMany({ where: { formId }, select: { id: true } });
+  const existingSet = new Set(existing.map((x) => x.id));
+  const kept: string[] = [];
+
+  await prisma.$transaction(async (tx) => {
+    for (const rule of parsed.data) {
+      const common = {
+        name: rule.name,
+        enabled: rule.enabled ?? true,
+        trigger: rule.trigger ?? "ON_SCHEDULE",
+        conditionJson: JSON.stringify(rule.condition),
+        actionJson: JSON.stringify(rule.action),
+      };
+      if (rule.id && existingSet.has(rule.id)) {
+        await tx.formFlowRule.update({ where: { id: rule.id }, data: common });
+        kept.push(rule.id);
+      } else {
+        const created = await tx.formFlowRule.create({ data: { formId, ...common } });
+        kept.push(created.id);
+      }
+    }
+    if (kept.length === 0) await tx.formFlowRule.deleteMany({ where: { formId } });
+    else await tx.formFlowRule.deleteMany({ where: { formId, id: { notIn: kept } } });
+  });
+
+  const rules = await prisma.formFlowRule.findMany({ where: { formId }, orderBy: { createdAt: "asc" } });
+  res.json(
+    rules.map((r) => ({
+      id: r.id,
+      name: r.name,
+      enabled: r.enabled,
+      trigger: r.trigger,
+      condition: JSON.parse(r.conditionJson),
+      action: JSON.parse(r.actionJson),
+      lastFiredAt: r.lastFiredAt,
+    }))
+  );
 });
 
 app.put("/api/forms/:id/questions", authMiddleware, async (req, res) => {

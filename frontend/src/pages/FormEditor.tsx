@@ -8,6 +8,9 @@ type Opt = { id: string; label: string; parentOptionIds?: string[]; score?: numb
 type Row = { id: string; label: string };
 type QType = "TEXT" | "TEXTAREA" | "SINGLE_CHOICE" | "MULTI_CHOICE" | "NUMBER" | "DATE" | "FILE" | "GRID" | "PAGE_BREAK" | "AGREEMENT";
 type Q = { id?: string; type: QType; title: string; description?: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: { questionId: string; optionIds: string[] } | null; };
+type FlowCondition = { kind: "MISSING_ENTITY_QUOTA"; questionId: string; periodUnit: "DAY" | "MONTH" | "YEAR"; periodValue: number; minCount: number; entities?: string[] };
+type FlowAction = { kind: "SEND_EMAIL"; emails: string[]; subject?: string };
+type FlowRule = { id?: string; name: string; enabled: boolean; trigger: "ON_SCHEDULE" | "ON_SUBMIT"; condition: FlowCondition; action: FlowAction; lastFiredAt?: string | null };
 
 type FormPayload = {
   id: string; title: string; slug: string; published: boolean; revision: number; description: string | null;
@@ -24,6 +27,15 @@ function createId() {
 function newOpt(): Opt { return { id: createId(), label: "" }; }
 function newRow(): Row { return { id: createId(), label: "" }; }
 function newQuestion(type: QType = "TEXT"): Q { return { type, title: type === "PAGE_BREAK" ? "Yeni Bölüm / Sayfa" : "", description: "", required: false, options: type === "SINGLE_CHOICE" || type === "MULTI_CHOICE" || type === "GRID" ? [newOpt(), newOpt()] : [], rows: type === "GRID" ? [newRow(), newRow()] : [], showWhen: null }; }
+function newFlowRule(): FlowRule {
+  return {
+    name: "Eksik Forklift Kontrolü",
+    enabled: true,
+    trigger: "ON_SCHEDULE",
+    condition: { kind: "MISSING_ENTITY_QUOTA", questionId: "", periodUnit: "DAY", periodValue: 1, minCount: 10, entities: [] },
+    action: { kind: "SEND_EMAIL", emails: [], subject: "" },
+  };
+}
 
 const ICONS: Record<QType, React.ReactNode> = {
   TEXT: <Type size={16} />,
@@ -69,6 +81,7 @@ export default function FormEditor() {
   const [openOptionLogic, setOpenOptionLogic] = useState<string | null>(null);
   /** Kota varlık listesi — textarea için dizi yerine metin (imleç sıçramasını önler) */
   const [quotaDraft, setQuotaDraft] = useState("");
+  const [flowRules, setFlowRules] = useState<FlowRule[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -84,6 +97,9 @@ export default function FormEditor() {
       setQuotaDraft(qe.join("\n"));
       setQuestions(qs);
       if (qs.length > 0) setSelectedQIndex(0);
+    }).then(async () => {
+      const rules = await api<FlowRule[]>(`/api/forms/${id}/flows`);
+      setFlowRules(Array.isArray(rules) ? rules : []);
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -94,6 +110,23 @@ export default function FormEditor() {
       const quotaEntities = quotaDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       await api(`/api/forms/${id}`, { method: "PATCH", body: JSON.stringify({ ...meta, quotaEntities }) });
       await api(`/api/forms/${id}/questions`, { method: "PUT", body: JSON.stringify(questions) });
+      await api(`/api/forms/${id}/flows`, {
+        method: "PUT",
+        body: JSON.stringify(flowRules.map((r) => ({
+          id: r.id,
+          name: r.name,
+          enabled: r.enabled,
+          trigger: r.trigger,
+          condition: {
+            ...r.condition,
+            entities: (r.condition.entities ?? []).map((x) => x.trim()).filter(Boolean),
+          },
+          action: {
+            ...r.action,
+            emails: (r.action.emails ?? []).map((x) => x.trim()).filter(Boolean),
+          },
+        }))),
+      });
       setMsg("Değişiklikler kaydedildi.");
       setTimeout(() => setMsg(""), 3000);
     } catch (err) { setMsg(err instanceof Error ? err.message : "Hata"); }
@@ -286,6 +319,65 @@ export default function FormEditor() {
                     }))
                   }
                 />
+              </div>
+
+              <div style={{ marginTop: "1.5rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+                  <label style={{ fontWeight: 700, color: "var(--primary)" }}>Akış Kuralları</label>
+                  <button className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newFlowRule()])}>
+                    <Plus size={14} /> Akış Ekle
+                  </button>
+                </div>
+                {flowRules.length === 0 && (
+                  <div style={{ fontSize: "0.85rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
+                    Henüz akış yok. Örn: "Forklift no sorusuna göre günde 10’dan azsa mail at".
+                  </div>
+                )}
+                {flowRules.map((rule, i) => (
+                  <div key={rule.id || `flow-${i}`} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem", marginBottom: "0.75rem", background: "var(--surface-soft)" }}>
+                    <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                      <input className="input" value={rule.name} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))} placeholder="Kural adı" />
+                      <button className="btn-icon" title="Sil" onClick={() => setFlowRules((arr) => arr.filter((_, idx) => idx !== i))}><Trash2 size={16} /></button>
+                    </div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+                      <input type="checkbox" checked={rule.enabled} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, enabled: e.target.checked } : x))} />
+                      Kural aktif
+                    </label>
+                    <div style={{ display: "grid", gap: "0.5rem" }}>
+                      <label style={{ fontSize: "0.85rem" }}>Varlık sorusu</label>
+                      <select className="input" value={rule.condition.questionId} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, questionId: e.target.value } } : x))}>
+                        <option value="">Soruyu seçin</option>
+                        {questions.filter((q) => !!q.id && (q.type === "TEXT" || q.type === "NUMBER" || q.type === "SINGLE_CHOICE")).map((q) => (
+                          <option key={q.id} value={q.id}>{q.title || "İsimsiz soru"}</option>
+                        ))}
+                      </select>
+                      <div style={{ display: "flex", gap: "0.5rem" }}>
+                        <input type="number" className="input" min={1} value={rule.condition.periodValue} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, periodValue: parseInt(e.target.value) || 1 } } : x))} />
+                        <select className="input" value={rule.condition.periodUnit} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, periodUnit: e.target.value as FlowCondition["periodUnit"] } } : x))}>
+                          <option value="DAY">Gün</option>
+                          <option value="MONTH">Ay</option>
+                          <option value="YEAR">Yıl</option>
+                        </select>
+                        <input type="number" className="input" min={1} value={rule.condition.minCount} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, minCount: parseInt(e.target.value) || 1 } } : x))} placeholder="Min yanıt" />
+                      </div>
+                      <label style={{ fontSize: "0.85rem" }}>Varlık listesi (opsiyonel, satır satır)</label>
+                      <textarea
+                        className="input"
+                        rows={3}
+                        value={(rule.condition.entities ?? []).join("\n")}
+                        onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, entities: e.target.value.split(/\r?\n/).map((v) => v.trim()).filter(Boolean) } } : x))}
+                        placeholder="FL-01&#10;FL-02"
+                      />
+                      <label style={{ fontSize: "0.85rem" }}>Mail alıcıları (virgül)</label>
+                      <input
+                        className="input"
+                        value={(rule.action.emails ?? []).join(", ")}
+                        onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: e.target.value.split(/[,;\n]+/).map((v) => v.trim()).filter(Boolean) } } : x))}
+                        placeholder="saha@firma.com, bakim@firma.com"
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

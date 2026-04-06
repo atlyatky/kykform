@@ -45,6 +45,94 @@ function entityKeyFromAnswers(answers: Record<string, unknown>, qid: string): st
   return String(raw);
 }
 
+type FlowCondition = {
+  kind: "MISSING_ENTITY_QUOTA";
+  questionId: string;
+  periodUnit: "DAY" | "MONTH" | "YEAR";
+  periodValue: number;
+  minCount: number;
+  entities?: string[];
+};
+
+type FlowAction = {
+  kind: "SEND_EMAIL";
+  emails: string[];
+  subject?: string;
+};
+
+function periodStartByParts(unit: "DAY" | "MONTH" | "YEAR", value: number, now: Date): Date {
+  const v = Math.max(1, value);
+  if (unit === "DAY") {
+    const s = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    s.setUTCDate(s.getUTCDate() - (v - 1));
+    return s;
+  }
+  if (unit === "MONTH") return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (v - 1), 1));
+  return new Date(Date.UTC(now.getUTCFullYear() - (v - 1), 0, 1));
+}
+
+function shouldSendNow(lastFiredAt: Date | null, now: Date): boolean {
+  if (!lastFiredAt) return true;
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  return lastFiredAt < oneDayAgo;
+}
+
+async function runFlowRules(now: Date) {
+  const rules = await prisma.formFlowRule.findMany({
+    where: { enabled: true, trigger: "ON_SCHEDULE", form: { published: true } },
+    include: { form: true },
+  });
+  for (const rule of rules) {
+    let condition: FlowCondition | null = null;
+    let action: FlowAction | null = null;
+    try {
+      condition = JSON.parse(rule.conditionJson) as FlowCondition;
+      action = JSON.parse(rule.actionJson) as FlowAction;
+    } catch {
+      continue;
+    }
+    if (!condition || !action) continue;
+    if (condition.kind !== "MISSING_ENTITY_QUOTA" || action.kind !== "SEND_EMAIL") continue;
+    if (!condition.questionId || !Array.isArray(action.emails) || action.emails.length === 0) continue;
+
+    const start = periodStartByParts(condition.periodUnit, condition.periodValue, now);
+    const subs = await prisma.submission.findMany({ where: { formId: rule.formId, createdAt: { gte: start } } });
+
+    const counts = new Map<string, number>();
+    for (const s of subs) {
+      let answers: Record<string, unknown> = {};
+      try {
+        answers = JSON.parse(s.answersJson) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const key = entityKeyFromAnswers(answers, condition.questionId);
+      if (!key) continue;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    const targets = (condition.entities ?? []).map((x) => x.trim()).filter(Boolean);
+    const entitySet = new Set<string>(targets);
+    if (entitySet.size === 0) {
+      for (const k of counts.keys()) entitySet.add(k);
+    }
+    const deficits: string[] = [];
+    for (const ent of entitySet) {
+      const c = counts.get(ent) ?? 0;
+      if (c < condition.minCount) deficits.push(`  • ${ent}: ${c} / ${condition.minCount}`);
+    }
+    if (deficits.length === 0) continue;
+    if (!shouldSendNow(rule.lastFiredAt, now)) continue;
+
+    const subject = action.subject?.trim() || `[KYK Form Akış] Eksik kayıt: ${rule.form.title}`;
+    const body =
+      `Form: ${rule.form.title}\nKural: ${rule.name}\nDönem başlangıcı: ${start.toISOString()}\n\nEksik kayıtlar:\n${deficits.join("\n")}`;
+
+    await sendMail(action.emails, subject, body);
+    await prisma.formFlowRule.update({ where: { id: rule.id }, data: { lastFiredAt: now } });
+  }
+}
+
 export async function runSlaCheckOnce() {
   const forms = await prisma.form.findMany({
     where: { published: true, periodUnit: { not: "NONE" } },
@@ -120,4 +208,6 @@ export async function runSlaCheckOnce() {
       }
     }
   }
+
+  await runFlowRules(now);
 }
