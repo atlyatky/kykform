@@ -42,7 +42,7 @@ services:
       mailhog:
         condition: service_started
 
-  # Tek web imajı: 80 = form doldurma, 8080 = yönetim paneli
+  # Tek port: IP ile girince tam uygulama (liste, düzenleme, /f/... formlar)
   web:
     build:
       context: ./frontend
@@ -50,10 +50,9 @@ services:
       args:
         VITE_API_URL: ""
         VITE_PUBLIC_FORM_BASE_URL: ${VITE_PUBLIC_FORM_BASE_URL:-}
-        NGINX_CONFIG: nginx-dual.conf
+        NGINX_CONFIG: nginx.conf
     ports:
       - "${WEB_PORT:-80}:80"
-      - "${ADMIN_WEB_PORT:-8080}:8080"
     depends_on:
       - api
 
