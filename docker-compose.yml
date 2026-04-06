@@ -43,7 +43,7 @@ services:
       mailhog:
         condition: service_started
 
-  # Tam arayüz (liste, düzenleme, analiz): yalnızca localhost — dış ağa açmayın
+  # Tam arayüz (liste, düzenleme, analiz): varsayılan port 8080 (ör. http://SUNUCU:8080)
   web:
     build:
       context: ./frontend
@@ -53,7 +53,7 @@ services:
         VITE_PUBLIC_FORM_BASE_URL: ${VITE_PUBLIC_FORM_BASE_URL:-}
         NGINX_CONFIG: nginx.conf
     ports:
-      - "127.0.0.1:${ADMIN_WEB_PORT:-8080}:80"
+      - "${ADMIN_WEB_PORT:-8080}:80"
     depends_on:
       - api
 
