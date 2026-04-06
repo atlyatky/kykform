@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kykyapi
+      POSTGRES_PASSWORD: kykyapi
+      POSTGRES_DB: formsdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kykyapi -d formsdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://kykyapi:kykyapi@db:5432/formsdb
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      PORT: 4000
+      NODE_ENV: production
+      PUBLIC_FORM_BASE_URL: ${PUBLIC_FORM_BASE_URL:-http://localhost:5174}
+      MAIL_HOST: ${MAIL_HOST:-mailhog}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_FROM: ${MAIL_FROM:-forms@kyk.local}
+    # VPS: API'yi doğrudan dışarı açmayın; web nginx /api üzerinden proxy eder.
+    ports:
+      - "127.0.0.1:4001:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Boş = tarayıcı /api kullanır (web nginx -> api). İsterseniz .env ile override: VITE_API_URL=http://host:4001
+        VITE_API_URL: ""
+    ports:
+      - "${WEB_PORT:-5174}:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+enum FormPeriodUnit {
+  NONE
+  DAY
+  MONTH
+  YEAR
+}
+
+model Form {
+  id                   String         @id @default(cuid())
+  title                String
+  description          String?
+  slug                 String         @unique
+  published            Boolean        @default(false)
+  slaHours             Int?
+  notifyEmails         String         @default("[]")
+  revision             Int            @default(1)
+  
+  periodUnit           FormPeriodUnit @default(NONE)
+  periodValue          Int            @default(1)
+  expectedSubmissions  Int            @default(1)
+  
+  lastPeriodicNotifyAt DateTime?
+  invalidAlertEnabled  Boolean        @default(false)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  questions            Question[]
+  submissions          Submission[]
+  sessions             FormSession[]
+}
+
+enum QuestionType {
+  AGREEMENT
+  PAGE_BREAK
+  FILE
+  GRID
+  TEXT
+  TEXTAREA
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  NUMBER
+  DATE
+}
+
+model Question {
+  id           String       @id @default(cuid())
+  formId       String
+  form         Form         @relation(fields: [formId], references: [id], onDelete: Cascade)
+  orderIndex   Int
+  type         QuestionType
+  title        String
+  description  String?
+  required     Boolean      @default(false)
+  optionsJson  String       @default("[]")
+  rowsJson     String?      @default("[]")
+  showWhenJson String?
+  createdAt    DateTime     @default(now())
+}
+
+model Submission {
+  id          String   @id @default(cuid())
+  formId      String
+  form        Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  answersJson String
+  score       Int?     @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model FormSession {
+  id            String    @id @default(cuid())
+  formId        String
+  form          Form      @relation(fields: [formId], references: [id], onDelete: Cascade)
+  sessionKey    String
+  openedAt      DateTime  @default(now())
+  submittedAt   DateTime?
+  slaNotifiedAt DateTime?
+
+  @@unique([formId, sessionKey])
+}
