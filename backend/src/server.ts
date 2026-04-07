@@ -263,7 +263,14 @@ async function runSubmitFlowRules(params: {
     const subject = action.subject?.trim() || "Uygunsuzluk Girişi Yapılmıştır";
     const reportLines = params.form.questions
       .filter((q) => q.type !== "PAGE_BREAK")
-      .map((q) => `- ${q.title || q.id}: ${formatAnswerForReport(q, params.answers[q.id])}`);
+      .map((q) => {
+        const base = formatAnswerForReport(q, params.answers[q.id]);
+        const isWatched = condition.questionIds.includes(q.id);
+        const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
+        const isNonConforming = isWatched && selected.includes(expected);
+        const prefix = isNonConforming ? "🔴 UYGUNSUZ" : "🟢";
+        return `- ${prefix} ${q.title || q.id}: ${base}`;
+      });
     const defaultBody =
       `Form: ${params.form.title}\n` +
       `Kural: ${rule.name}\n` +

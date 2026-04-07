@@ -16,7 +16,7 @@ type FlowRule = { id?: string; name: string; enabled: boolean; trigger: "ON_SCHE
 
 type FormPayload = {
   id: string; title: string; slug: string; published: boolean; revision: number; description: string | null;
-  periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR"; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; notifyEmails: string[]; notifyAt: string;
+  periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR"; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean;
   quotaQuestionId: string | null; quotaEntities: string[];
   questions: Array<{ id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: Q["showWhen"] }>;
 };
@@ -91,7 +91,7 @@ export default function FormEditor() {
 
   const [meta, setMeta] = useState<Omit<FormPayload, "questions">>({
     id: "", title: "", slug: "", published: false, revision: 1, description: "",
-    periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false, notifyEmails: [], notifyAt: "09:00",
+    periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false,
     quotaQuestionId: null, quotaEntities: [],
   });
   const [questions, setQuestions] = useState<Q[]>([]);
@@ -110,7 +110,6 @@ export default function FormEditor() {
         ...rest,
         quotaQuestionId: d.quotaQuestionId ?? null,
         quotaEntities: qe,
-        notifyEmails: Array.isArray(d.notifyEmails) ? d.notifyEmails : [],
       });
       setQuotaDraft(qe.join("\n"));
       setQuestions(qs);
@@ -158,7 +157,7 @@ export default function FormEditor() {
       const quotaEntities = quotaDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       await api(`/api/forms/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...meta, notifyEmails: parseWebhookList(meta.notifyEmails), quotaEntities }),
+        body: JSON.stringify({ ...meta, quotaEntities }),
       });
       await api(`/api/forms/${id}/questions`, { method: "PUT", body: JSON.stringify(questions) });
       await api(`/api/forms/${id}/flows`, {
@@ -364,40 +363,8 @@ export default function FormEditor() {
             <div className="editor-sidebar-section">
               <div className="editor-sidebar-title">Kurallar &amp; bildirim</div>
               <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "-0.5rem 0 1rem 0", lineHeight: 1.45 }}>
-                Basit kural cümlesiyle ilerleyin. İki tip var: <strong style={{ color: "var(--text)" }}>doldurulmadı bildirimi</strong> ve <strong style={{ color: "var(--text)" }}>şık seçimi bildirimi</strong>.
+                İki kural tipi var: <strong style={{ color: "var(--text)" }}>Doldurulmadı (saatli günlük rapor)</strong> ve <strong style={{ color: "var(--text)" }}>Uygunsuz Şık (anlık)</strong>.
               </p>
-
-              <div style={{ marginBottom: "1rem", padding: "1rem", background: "var(--surface2)", borderRadius: "8px", border: "1px solid var(--border)" }}>
-                <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--primary)", marginBottom: "0.5rem" }}>Genel bildirim adresleri</div>
-                <label>Teams webhook URL'leri (virgül/satır ile)</label>
-                <input
-                  className="input"
-                  placeholder="https://...webhook1, https://...webhook2"
-                  value={meta.notifyEmails.length <= 1 ? (meta.notifyEmails[0] ?? "") : meta.notifyEmails.join(", ")}
-                  onChange={(e) => setMeta((m) => ({ ...m, notifyEmails: [e.target.value] }))}
-                />
-                <div style={{ marginTop: "0.6rem" }}>
-                  <label>Raporlama saati</label>
-                  <input
-                    type="time"
-                    className="input"
-                    value={meta.notifyAt || "09:00"}
-                    onChange={(e) => setMeta((m) => ({ ...m, notifyAt: e.target.value || "09:00" }))}
-                  />
-                </div>
-                <div style={{ marginTop: "0.5rem" }}>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => void sendTest(meta.notifyEmails, `[Test] ${meta.title || "Form"}`, `Form bazlı test bildirimi\nSaat: ${meta.notifyAt || "09:00"}`)}
-                  >
-                    Test Gönder
-                  </button>
-                </div>
-                <div style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: "var(--muted)" }}>
-                  Not: Bu bölümde form bazlı kota kontrolü seçtiğiniz saatte çalışır.
-                </div>
-              </div>
 
               <div style={{ padding: "1rem", background: "var(--surface2)", borderRadius: "8px", border: "1px solid var(--border)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
@@ -423,7 +390,7 @@ export default function FormEditor() {
 
                     {rule.condition.kind === "MISSING_ENTITY_QUOTA" ? (
                       <div style={{ display: "grid", gap: "0.5rem" }}>
-                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Günde/Ayda/Yılda X kez, belirli varlık için form doldurulmadıysa bildir.</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Belirlenen saatte her gün kontrol edip varlık bazlı dolduruldu/doldurulmadı raporu gönderir.</div>
                         <select className="input" value={rule.condition.questionId} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, questionId: e.target.value, entities: [], minCount: 1 } } : x))}>
                           <option value="">Varlık sorusu seçin (örn. forklift no)</option>
                           {eligibleEntityQuestions.map((q) => <option key={q.id} value={q.id}>{q.title || "İsimsiz soru"}</option>)}
@@ -519,7 +486,7 @@ export default function FormEditor() {
                       </div>
                     ) : (
                       <div style={{ display: "grid", gap: "0.5rem" }}>
-                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Seçili sorularda uygunsuz şık işaretlenirse gönderim anında form raporunu webhooka atar.</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Uygunsuz şık seçilirse gönderim anında form raporunu webhooka atar.</div>
                         <label style={{ fontSize: "0.85rem" }}>Sorular</label>
                         <div style={{ maxHeight: 120, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem" }}>
                           {eligibleChoiceQuestions.length === 0 && <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Önce tekli/çoklu seçim sorusu ekleyin.</div>}
