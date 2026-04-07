@@ -62,7 +62,9 @@ docker compose up -d --build
 docker compose ps
 "@
 
-$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
+# Uzak bash CRLF ile bozulmasin (set -e hatasi)
+$remoteScriptUnix = $remoteScript -replace "`r`n", "`n" -replace "`r", "`n"
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScriptUnix))
 
 Write-Host "Yukleniyor: ${User}@${VpsHost}:$remoteTar" -ForegroundColor Cyan
 scp $tarball "${User}@${VpsHost}:$remoteTar"
