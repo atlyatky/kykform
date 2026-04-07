@@ -268,15 +268,18 @@ async function runSubmitFlowRules(params: {
         const isWatched = condition.questionIds.includes(q.id);
         const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
         const isNonConforming = isWatched && selected.includes(expected);
-        const prefix = isNonConforming ? "🔴 UYGUNSUZ" : "🟢";
-        return `- ${prefix} ${q.title || q.id}: ${base}`;
+        const status = isNonConforming ? "🔴 UYGUNSUZ" : "🟢 UYGUN";
+        return `| ${status} | ${q.title || q.id} | ${base || "(bos)"} |`;
       });
     const defaultBody =
       `Form: ${params.form.title}\n` +
       `Kural: ${rule.name}\n` +
       `Gonderim ID: ${params.submissionId}\n` +
       `Tetikleyen kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.\n\n` +
-      `Form raporu:\n${reportLines.join("\n")}`;
+      `Tum cevaplar:\n` +
+      `| Durum | Soru | Cevap |\n` +
+      `|---|---|---|\n` +
+      `${reportLines.join("\n")}`;
     const body = renderTemplate(action.messageTemplate, {
       formTitle: params.form.title,
       ruleName: rule.name,
