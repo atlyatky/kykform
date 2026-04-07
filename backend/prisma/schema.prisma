@@ -45,6 +45,7 @@ model Form {
   published            Boolean        @default(false)
   slaHours             Int?
   notifyEmails         String         @default("[]")
+  notifyAt             String         @default("09:00")
   revision             Int            @default(1)
   
   periodUnit           FormPeriodUnit @default(NONE)

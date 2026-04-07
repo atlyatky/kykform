@@ -53,6 +53,7 @@ type FlowMissingQuotaCondition = {
   minCount: number;
   entities?: string[];
   weekdays?: number[];
+  reportTime?: string;
 };
 type FlowAnswerLabelMatchCondition = {
   kind: "ANSWER_LABEL_MATCH";
@@ -66,6 +67,7 @@ type FlowAction = {
   kind: "SEND_EMAIL";
   emails: string[];
   subject?: string;
+  messageTemplate?: string;
 };
 
 function periodStartByParts(unit: "DAY" | "MONTH" | "YEAR", value: number, now: Date): Date {
@@ -83,6 +85,18 @@ function shouldSendNow(lastFiredAt: Date | null, now: Date): boolean {
   if (!lastFiredAt) return true;
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   return lastFiredAt < oneDayAgo;
+}
+
+function shouldRunAtTime(now: Date, hhmm: string | undefined): boolean {
+  const raw = (hhmm ?? "09:00").trim();
+  const [h, m] = raw.split(":").map((x) => Number(x));
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return true;
+  return now.getHours() === h && now.getMinutes() === m;
+}
+
+function renderTemplate(template: string | undefined, tags: Record<string, string>, fallback: string): string {
+  if (!template || !template.trim()) return fallback;
+  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key: string) => tags[key] ?? `{${key}}`);
 }
 
 async function runFlowRules(now: Date) {
@@ -106,6 +120,7 @@ async function runFlowRules(now: Date) {
       ? condition.weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
       : [];
     if (activeWeekdays.length > 0 && !activeWeekdays.includes(now.getDay())) continue;
+    if (!shouldRunAtTime(now, condition.reportTime)) continue;
 
     const start = periodStartByParts(condition.periodUnit, condition.periodValue, now);
     const subs = await prisma.submission.findMany({ where: { formId: rule.formId, createdAt: { gte: start } } });
@@ -150,9 +165,15 @@ async function runFlowRules(now: Date) {
     if (!shouldSendNow(rule.lastFiredAt, now)) continue;
 
     const subject = action.subject?.trim() || `[KYK Form Akış] Eksik kayıt: ${rule.form.title}`;
-    const body =
+    const defaultBody =
       `Form: ${rule.form.title}\nKural: ${rule.name}\nDönem başlangıcı: ${start.toISOString()}\n\nEksik kayıtlar:\n${deficits.join("\n")}`;
-
+    const body = renderTemplate(action.messageTemplate, {
+      formTitle: rule.form.title,
+      ruleName: rule.name,
+      periodStart: start.toISOString(),
+      deficits: deficits.join("\n"),
+      reportTime: condition.reportTime ?? "09:00",
+    }, defaultBody);
     await notify(action.emails, subject, body);
     await prisma.formFlowRule.update({ where: { id: rule.id }, data: { lastFiredAt: now } });
   }
@@ -171,6 +192,7 @@ export async function runSlaCheckOnce() {
     // notifyEmails alanini ileride kaldirabiliriz.
     if (!form.notifyEmails || form.notifyEmails === "[]") continue;
 
+    if (!shouldRunAtTime(now, form.notifyAt)) continue;
     const start = periodStartUtc(form, now);
     const subs = await prisma.submission.findMany({
       where: { formId: form.id, createdAt: { gte: start } },

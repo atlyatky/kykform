@@ -8,15 +8,15 @@ type Opt = { id: string; label: string; parentOptionIds?: string[]; score?: numb
 type Row = { id: string; label: string };
 type QType = "TEXT" | "TEXTAREA" | "SINGLE_CHOICE" | "MULTI_CHOICE" | "NUMBER" | "DATE" | "FILE" | "GRID" | "PAGE_BREAK" | "AGREEMENT";
 type Q = { id?: string; type: QType; title: string; description?: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: { questionId: string; optionIds: string[] } | null; };
-type FlowMissingQuotaCondition = { kind: "MISSING_ENTITY_QUOTA"; questionId: string; periodUnit: "DAY" | "MONTH" | "YEAR"; periodValue: number; minCount: number; entities?: string[]; weekdays?: number[] };
+type FlowMissingQuotaCondition = { kind: "MISSING_ENTITY_QUOTA"; questionId: string; periodUnit: "DAY" | "MONTH" | "YEAR"; periodValue: number; minCount: number; entities?: string[]; weekdays?: number[]; reportTime?: string };
 type FlowAnswerLabelMatchCondition = { kind: "ANSWER_LABEL_MATCH"; questionIds: string[]; expectedLabel: string; mode: "ANY" | "ALL" };
 type FlowCondition = FlowMissingQuotaCondition | FlowAnswerLabelMatchCondition;
-type FlowAction = { kind: "SEND_EMAIL"; emails: string[]; subject?: string };
+type FlowAction = { kind: "SEND_EMAIL"; emails: string[]; subject?: string; messageTemplate?: string };
 type FlowRule = { id?: string; name: string; enabled: boolean; trigger: "ON_SCHEDULE" | "ON_SUBMIT"; condition: FlowCondition; action: FlowAction; lastFiredAt?: string | null };
 
 type FormPayload = {
   id: string; title: string; slug: string; published: boolean; revision: number; description: string | null;
-  periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR"; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; notifyEmails: string[];
+  periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR"; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; notifyEmails: string[]; notifyAt: string;
   quotaQuestionId: string | null; quotaEntities: string[];
   questions: Array<{ id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: Q["showWhen"] }>;
 };
@@ -34,8 +34,8 @@ function newMissingQuotaRule(): FlowRule {
     name: "Eksik Forklift Kontrolü",
     enabled: true,
     trigger: "ON_SCHEDULE",
-    condition: { kind: "MISSING_ENTITY_QUOTA", questionId: "", periodUnit: "DAY", periodValue: 1, minCount: 1, entities: [], weekdays: [1, 2, 3, 4, 5, 6] },
-    action: { kind: "SEND_EMAIL", emails: [], subject: "" },
+    condition: { kind: "MISSING_ENTITY_QUOTA", questionId: "", periodUnit: "DAY", periodValue: 1, minCount: 1, entities: [], weekdays: [1, 2, 3, 4, 5, 6], reportTime: "09:00" },
+    action: { kind: "SEND_EMAIL", emails: [], subject: "", messageTemplate: "" },
   };
 }
 function newAnswerLabelRule(): FlowRule {
@@ -44,7 +44,7 @@ function newAnswerLabelRule(): FlowRule {
     enabled: true,
     trigger: "ON_SUBMIT",
     condition: { kind: "ANSWER_LABEL_MATCH", questionIds: [], expectedLabel: "", mode: "ANY" },
-    action: { kind: "SEND_EMAIL", emails: [], subject: "" },
+    action: { kind: "SEND_EMAIL", emails: [], subject: "", messageTemplate: "" },
   };
 }
 function parseWebhookList(values: string[]): string[] {
@@ -91,7 +91,7 @@ export default function FormEditor() {
 
   const [meta, setMeta] = useState<Omit<FormPayload, "questions">>({
     id: "", title: "", slug: "", published: false, revision: 1, description: "",
-    periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false, notifyEmails: [],
+    periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false, notifyEmails: [], notifyAt: "09:00",
     quotaQuestionId: null, quotaEntities: [],
   });
   const [questions, setQuestions] = useState<Q[]>([]);
@@ -130,6 +130,7 @@ export default function FormEditor() {
                     expectedLabel: r.condition.expectedLabel ?? "",
                     mode: r.condition.mode === "ALL" ? "ALL" : "ANY",
                   },
+                action: { ...r.action, messageTemplate: r.action.messageTemplate ?? "" },
                 } as FlowRule;
               }
               return {
@@ -140,7 +141,9 @@ export default function FormEditor() {
                   minCount: 1,
                   entities: Array.isArray(r.condition.entities) ? r.condition.entities : [],
                   weekdays: Array.isArray(r.condition.weekdays) && r.condition.weekdays.length > 0 ? r.condition.weekdays : [1, 2, 3, 4, 5, 6],
+                  reportTime: typeof r.condition.reportTime === "string" ? r.condition.reportTime : "09:00",
                 },
+                action: { ...r.action, messageTemplate: r.action.messageTemplate ?? "" },
               } as FlowRule;
             })
           : []
@@ -171,11 +174,13 @@ export default function FormEditor() {
                 minCount: 1,
                 entities: (r.condition.entities ?? []).map((x) => x.trim()).filter(Boolean),
                 weekdays: (r.condition.weekdays ?? [1, 2, 3, 4, 5, 6]).filter((d) => d >= 0 && d <= 6),
+                reportTime: (r.condition.reportTime ?? "09:00"),
               }
             : { ...r.condition, questionIds: r.condition.questionIds.filter(Boolean), expectedLabel: r.condition.expectedLabel.trim() },
           action: {
             ...r.action,
             emails: parseWebhookList(r.action.emails ?? []),
+            messageTemplate: (r.action.messageTemplate ?? "").trim(),
           },
         }))),
       });
@@ -226,11 +231,19 @@ export default function FormEditor() {
     const map: Record<number, string> = { 0: "Pazar", 1: "Pazartesi", 2: "Sali", 3: "Carsamba", 4: "Persembe", 5: "Cuma", 6: "Cumartesi" };
     return map[v] ?? String(v);
   };
+  const appendTemplateTag = (ruleIndex: number, tag: string) => {
+    setFlowRules((arr) => arr.map((x, idx) => {
+      if (idx !== ruleIndex) return x;
+      const curr = x.action.messageTemplate ?? "";
+      const sep = curr && !curr.endsWith(" ") && !curr.endsWith("\n") ? " " : "";
+      return { ...x, action: { ...x.action, messageTemplate: `${curr}${sep}${tag}` } };
+    }));
+  };
   const ruleSentence = (rule: FlowRule) => {
     if (rule.condition.kind === "MISSING_ENTITY_QUOTA") {
       const qTitle = questionTitleById.get(rule.condition.questionId) ?? "seçili varlık";
       const d = (rule.condition.weekdays ?? [1, 2, 3, 4, 5, 6]).map(weekdayLong).join(", ");
-      return `${rule.condition.periodValue} ${periodText(rule.condition.periodUnit)} "${qTitle}" sorusundaki secili her varlik icin 1 kayit bekle; ${d} gunlerinde eksik olanlari ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildir.`;
+      return `${rule.condition.periodValue} ${periodText(rule.condition.periodUnit)} "${qTitle}" sorusundaki secili her varlik icin 1 kayit bekle; ${d} gunlerinde saat ${rule.condition.reportTime ?? "09:00"}'da eksikleri ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildir.`;
     }
     const names = rule.condition.questionIds.map((id) => questionTitleById.get(id) ?? "isimsiz soru").join(", ");
     return `"${names || "soru seçin"}" sorularında "${rule.condition.expectedLabel || "değer"}" ${rule.condition.mode === "ALL" ? "hepsinde" : "en az birinde"} seçilirse ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildirim at.`;
@@ -350,8 +363,17 @@ export default function FormEditor() {
                   value={meta.notifyEmails.length <= 1 ? (meta.notifyEmails[0] ?? "") : meta.notifyEmails.join(", ")}
                   onChange={(e) => setMeta((m) => ({ ...m, notifyEmails: [e.target.value] }))}
                 />
+                <div style={{ marginTop: "0.6rem" }}>
+                  <label>Raporlama saati</label>
+                  <input
+                    type="time"
+                    className="input"
+                    value={meta.notifyAt || "09:00"}
+                    onChange={(e) => setMeta((m) => ({ ...m, notifyAt: e.target.value || "09:00" }))}
+                  />
+                </div>
                 <div style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: "var(--muted)" }}>
-                  Not: Zorunlu sorular boş bırakılırsa form gönderimi sistem tarafından otomatik engellenir.
+                  Not: Bu bölümde form bazlı kota kontrolü seçtiğiniz saatte çalışır.
                 </div>
               </div>
 
@@ -391,6 +413,18 @@ export default function FormEditor() {
                             <option value="MONTH">Ay</option>
                             <option value="YEAR">Yıl</option>
                           </select>
+                          <input
+                            type="time"
+                            className="input"
+                            style={{ minWidth: "120px" }}
+                            value={rule.condition.reportTime ?? "09:00"}
+                            onChange={(e) => setFlowRules((arr) => arr.map((x, idx) =>
+                              idx === i && x.condition.kind === "MISSING_ENTITY_QUOTA"
+                                ? { ...x, condition: { ...x.condition, reportTime: e.target.value || "09:00" } }
+                                : x
+                            ))}
+                            title="Raporlama saati"
+                          />
                           <div style={{ flex: 1, minWidth: "120px", fontSize: "0.82rem", color: "var(--muted)", display: "flex", alignItems: "center" }}>
                             Her secili varlik icin hedef: <strong style={{ marginLeft: 4, color: "var(--text)" }}>1 kayit</strong>
                           </div>
@@ -484,6 +518,24 @@ export default function FormEditor() {
                         <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Teams webhook URL(ler)i" />
                       </div>
                     )}
+
+                    <div style={{ marginTop: "0.6rem", display: "grid", gap: "0.45rem" }}>
+                      <label style={{ fontSize: "0.85rem" }}>Bildirim metni (opsiyonel)</label>
+                      <textarea
+                        className="input"
+                        rows={3}
+                        value={rule.action.messageTemplate ?? ""}
+                        onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, messageTemplate: e.target.value } } : x))}
+                        placeholder="Örn: {formTitle} formunda {ruleName} kuralı tetiklendi. {deficits}"
+                      />
+                      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                        {["{formTitle}", "{ruleName}", "{expectedLabel}", "{submissionId}", "{deficits}", "{periodStart}", "{reportTime}"].map((tag) => (
+                          <button key={tag} type="button" className="btn btn-ghost" style={{ padding: "0.2rem 0.45rem", fontSize: "0.75rem" }} onClick={() => appendTemplateTag(i, tag)}>
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
 
                     <div style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: "var(--primary)", background: "var(--surface-soft)", borderRadius: 6, padding: "0.5rem" }}>
                       {ruleSentence(rule)}

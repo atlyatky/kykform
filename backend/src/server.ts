@@ -125,6 +125,7 @@ const flowMissingQuotaConditionSchema = z.object({
   minCount: z.number().int().min(1),
   entities: z.array(z.string()).optional(),
   weekdays: z.array(z.number().int().min(0).max(6)).optional(),
+  reportTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
 });
 const flowAnswerLabelMatchConditionSchema = z.object({
   kind: z.literal("ANSWER_LABEL_MATCH"),
@@ -140,6 +141,7 @@ const flowActionSchema = z.object({
   kind: z.literal("SEND_EMAIL"),
   emails: z.array(z.string().url()).min(1),
   subject: z.string().optional(),
+  messageTemplate: z.string().optional(),
 });
 const flowRuleInputSchema = z.object({
   id: z.string().optional(),
@@ -171,6 +173,11 @@ function parseEmails(json: string): string[] {
 
 function normalizeText(v: string): string {
   return v.trim().toLocaleLowerCase("tr");
+}
+
+function renderTemplate(template: string | undefined, tags: Record<string, string>, fallback: string): string {
+  if (!template || !template.trim()) return fallback;
+  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key: string) => tags[key] ?? `{${key}}`);
 }
 
 function extractSelectedLabels(
@@ -227,11 +234,18 @@ async function runSubmitFlowRules(params: {
     if (!matched) continue;
 
     const subject = action.subject?.trim() || `[KYK Form Kural] Kosul saglandi: ${params.form.title}`;
-    const body =
+    const defaultBody =
       `Form: ${params.form.title}\n` +
       `Kural: ${rule.name}\n` +
       `Gonderim ID: ${params.submissionId}\n` +
       `Kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.`;
+    const body = renderTemplate(action.messageTemplate, {
+      formTitle: params.form.title,
+      ruleName: rule.name,
+      submissionId: params.submissionId,
+      expectedLabel: condition.expectedLabel,
+      mode: condition.mode === "ALL" ? "ALL" : "ANY",
+    }, defaultBody);
     await notify(action.emails, subject, body);
   }
 }
@@ -443,7 +457,7 @@ function parseQuotaEntities(json: string): string[] {
 
 function serializeForm(form: {
   id: string; title: string; description: string | null; slug: string; published: boolean; revision: number;
-  periodUnit: string; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; slaHours: number | null; notifyEmails: string;
+  periodUnit: string; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; slaHours: number | null; notifyEmails: string; notifyAt: string;
   quotaQuestionId: string | null; quotaEntityListJson: string;
   questions: Array<{ id: string; type: string; title: string; description: string | null; required: boolean; optionsJson: string; rowsJson: string | null; showWhenJson: string | null; orderIndex: number }>;
 }) {
@@ -460,6 +474,7 @@ function serializeForm(form: {
     invalidAlertEnabled: form.invalidAlertEnabled,
     slaHours: form.slaHours,
     notifyEmails: parseEmails(form.notifyEmails),
+    notifyAt: form.notifyAt || "09:00",
     quotaQuestionId: form.quotaQuestionId,
     quotaEntities: parseQuotaEntities(form.quotaEntityListJson),
     questions: form.questions.map((q) => ({
@@ -490,6 +505,7 @@ app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
     published: z.boolean().optional(),
     slaHours: z.number().int().positive().nullable().optional(),
     notifyEmails: z.array(z.string().url()).optional(),
+    notifyAt: z.string().regex(/^\d{2}:\d{2}$/).optional(),
     periodUnit: z.enum(["NONE", "DAY", "MONTH", "YEAR"]).optional(),
     periodValue: z.number().int().min(1).optional(),
     expectedSubmissions: z.number().int().min(1).optional(),
@@ -504,6 +520,7 @@ app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
   if (body.data.published !== undefined) data.published = body.data.published;
   if (body.data.slaHours !== undefined) data.slaHours = body.data.slaHours;
   if (body.data.notifyEmails !== undefined) data.notifyEmails = JSON.stringify(body.data.notifyEmails);
+  if (body.data.notifyAt !== undefined) data.notifyAt = body.data.notifyAt;
   if (body.data.periodUnit !== undefined) data.periodUnit = body.data.periodUnit;
   if (body.data.periodValue !== undefined) data.periodValue = body.data.periodValue;
   if (body.data.expectedSubmissions !== undefined) data.expectedSubmissions = body.data.expectedSubmissions;
