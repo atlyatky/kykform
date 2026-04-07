@@ -258,12 +258,9 @@ export default function FormEditor() {
       return {
         subject: "Uygunsuzluk Girişi Yapılmıştır",
         message: [
-          "Form: TEST FORM",
-          `Kural: ${rule.name || "Uygunsuz Şık"}`,
           `Tarih: ${now.toLocaleDateString("tr-TR")}`,
           `Saat: ${now.toLocaleTimeString("tr-TR")}`,
-          "Gonderim ID: TEST-001",
-          `Tetikleyen kosul: "${rule.condition.expectedLabel || "Uygunsuz"}" secildi.`,
+          "Form Adı: TEST FORM",
           "",
           "Formun Dolu Görünümü:",
           "",
