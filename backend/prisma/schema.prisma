@@ -21,7 +21,7 @@ model Admin {
   /// base32 (Google Authenticator / TOTP). Enabled ise dolu olmalı.
   totpSecret   String?
   createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  updatedAt    DateTime  @default(now()) @updatedAt
 }
 
 model FirewallConfig {
