@@ -224,48 +224,6 @@ function formatAnswerForReport(
   }
 }
 
-function formatQuestionDetailForNonconformity(params: {
-  q: { id: string; title: string; type: string; optionsJson: string; rowsJson?: string | null };
-  rawAnswer: unknown;
-  isWatched: boolean;
-  expectedLabelNorm: string;
-}): string {
-  const q = params.q;
-  const raw = params.rawAnswer;
-  if (raw === undefined || raw === null || raw === "") return "(bos)";
-
-  const options = JSON.parse(q.optionsJson || "[]") as Array<{ id: string; label: string }>;
-  const labelById = new Map(options.map((o) => [o.id, o.label || o.id]));
-
-  if (q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE") {
-    const selected = new Set<string>();
-    if (typeof raw === "string") selected.add(raw);
-    if (Array.isArray(raw)) for (const x of raw) if (typeof x === "string") selected.add(x);
-    const parts = options.map((opt) => {
-      const isSel = selected.has(opt.id);
-      const norm = normalizeText(opt.label || "");
-      const isBad = params.isWatched && isSel && norm === params.expectedLabelNorm;
-      const mark = isBad ? "🔴" : isSel ? "🟢" : "⚪";
-      return `${mark} ${opt.label || opt.id}`;
-    });
-    return parts.join(" | ");
-  }
-
-  if (q.type === "GRID" && typeof raw === "object" && raw !== null) {
-    const rows = JSON.parse(q.rowsJson || "[]") as Array<{ id: string; label: string }>;
-    const rowMap = raw as Record<string, unknown>;
-    return rows
-      .map((r) => {
-        const cell = rowMap[r.id];
-        const txt = typeof cell === "string" ? (labelById.get(cell) ?? cell) : String(cell ?? "(bos)");
-        return `${r.label}: ${txt}`;
-      })
-      .join(" | ");
-  }
-
-  return formatAnswerForReport(q, raw);
-}
-
 async function runSubmitFlowRules(params: {
   form: { id: string; title: string; questions: Array<{ id: string; title: string; type: string; optionsJson: string; rowsJson: string | null }> };
   answers: Record<string, unknown>;
@@ -306,24 +264,20 @@ async function runSubmitFlowRules(params: {
     const reportLines = params.form.questions
       .filter((q) => q.type !== "PAGE_BREAK")
       .map((q) => {
-        const isWatched = condition.questionIds.includes(q.id);
-        const detail = formatQuestionDetailForNonconformity({
-          q,
-          rawAnswer: params.answers[q.id],
-          isWatched,
-          expectedLabelNorm: expected,
-        });
-        return `| ${q.title || q.id} | ${detail} |`;
+        const answer = formatAnswerForReport(q, params.answers[q.id]);
+        const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
+        const isNonConforming = condition.questionIds.includes(q.id) && selected.includes(expected);
+        return `${isNonConforming ? "🔴" : "🟢"} ${q.title || q.id}\n${answer || "(bos)"}`;
       });
     const defaultBody =
       `Form: ${params.form.title}\n` +
       `Kural: ${rule.name}\n` +
+      `Tarih: ${new Date().toLocaleDateString("tr-TR")}\n` +
+      `Saat: ${new Date().toLocaleTimeString("tr-TR")}\n` +
       `Gonderim ID: ${params.submissionId}\n` +
       `Tetikleyen kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.\n\n` +
-      `Tum cevaplar:\n` +
-      `| Soru | Cevaplar |\n` +
-      `|---|---|\n` +
-      `${reportLines.join("\n")}`;
+      `Formun Dolu Görünümü:\n\n` +
+      `${reportLines.join("\n\n")}`;
     const body = renderTemplate(action.messageTemplate, {
       formTitle: params.form.title,
       ruleName: rule.name,
