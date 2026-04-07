@@ -138,7 +138,7 @@ const flowConditionSchema = z.discriminatedUnion("kind", [
 ]);
 const flowActionSchema = z.object({
   kind: z.literal("SEND_EMAIL"),
-  emails: z.array(z.string().email()).min(1),
+  emails: z.array(z.string().url()).min(1),
   subject: z.string().optional(),
 });
 const flowRuleInputSchema = z.object({
@@ -232,7 +232,7 @@ async function runSubmitFlowRules(params: {
       `Kural: ${rule.name}\n` +
       `Gonderim ID: ${params.submissionId}\n` +
       `Kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.`;
-    await notify(subject, body);
+    await notify(action.emails, subject, body);
   }
 }
 
@@ -489,7 +489,7 @@ app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
     description: z.string().nullable().optional(),
     published: z.boolean().optional(),
     slaHours: z.number().int().positive().nullable().optional(),
-    notifyEmails: z.array(z.string().email()).optional(),
+    notifyEmails: z.array(z.string().url()).optional(),
     periodUnit: z.enum(["NONE", "DAY", "MONTH", "YEAR"]).optional(),
     periodValue: z.number().int().min(1).optional(),
     expectedSubmissions: z.number().int().min(1).optional(),

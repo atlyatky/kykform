@@ -2,11 +2,11 @@ type TeamsWebhookPayload = {
   text: string;
 };
 
-const TEAMS_WEBHOOK_URL = process.env.TEAMS_WEBHOOK_URL ?? "";
+const DEFAULT_TEAMS_WEBHOOK_URL = process.env.TEAMS_WEBHOOK_URL ?? "";
 
-export async function sendTeams(text: string) {
-  if (!TEAMS_WEBHOOK_URL) return;
-  const res = await fetch(TEAMS_WEBHOOK_URL, {
+export async function sendTeams(webhookUrl: string, text: string) {
+  if (!webhookUrl) return;
+  const res = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text } satisfies TeamsWebhookPayload),
@@ -17,9 +17,13 @@ export async function sendTeams(text: string) {
   }
 }
 
-export async function notify(subject: string, body: string) {
-  // Tek kanal: Teams. İstenirse ileride mail de eklenebilir.
+export async function notify(webhookUrls: string[], subject: string, body: string) {
   const text = `**${subject}**\n\n${body}`.replace(/\n/g, "\n");
-  await sendTeams(text);
+  const targets = Array.from(
+    new Set((webhookUrls ?? []).map((x) => x.trim()).filter(Boolean))
+  );
+  if (targets.length === 0 && DEFAULT_TEAMS_WEBHOOK_URL) targets.push(DEFAULT_TEAMS_WEBHOOK_URL);
+  if (targets.length === 0) return;
+  await Promise.all(targets.map((url) => sendTeams(url, text)));
 }
 

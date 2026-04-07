@@ -2,7 +2,7 @@
 import { prisma } from "./prisma.js";
 import { notify } from "./notify.js";
 
-function parseEmails(json: string): string[] {
+function parseWebhookUrls(json: string): string[] {
   try {
     const a = JSON.parse(json) as unknown;
     return Array.isArray(a) ? a.filter((x): x is string => typeof x === "string") : [];
@@ -153,7 +153,7 @@ async function runFlowRules(now: Date) {
     const body =
       `Form: ${rule.form.title}\nKural: ${rule.name}\nDönem başlangıcı: ${start.toISOString()}\n\nEksik kayıtlar:\n${deficits.join("\n")}`;
 
-    await notify(subject, body);
+    await notify(action.emails, subject, body);
     await prisma.formFlowRule.update({ where: { id: rule.id }, data: { lastFiredAt: now } });
   }
 }
@@ -216,14 +216,15 @@ export async function runSlaCheckOnce() {
     if (deficitLines.length === 0) continue;
 
     if (!form.lastPeriodicNotifyAt || form.lastPeriodicNotifyAt < oneDayAgo) {
-      const recipients = parseEmails(form.notifyEmails);
-      if (recipients.length > 0) {
+      const webhooks = parseWebhookUrls(form.notifyEmails);
+      if (webhooks.length > 0) {
         const unitStr = form.periodUnit === "DAY" ? "gün" : form.periodUnit === "MONTH" ? "ay" : "yıl";
         const scope = form.quotaQuestionId
           ? `Varlık başına (soru ID: ${form.quotaQuestionId}) en az ${expected} yanıt bekleniyor.\nEksikler:\n${deficitLines.join("\n")}`
           : `Son ${form.periodValue} ${unitStr} içinde en az ${expected} toplam yanıt bekleniyor.\n${deficitLines.join("\n")}`;
 
         await notify(
+          webhooks,
           `[KYK Form] Eksik kota: ${form.title}`,
           `"${form.title}" formu için kota altında kayıt var.\n\n${scope}\n\nDönem başı: ${start.toISOString()}`
         );

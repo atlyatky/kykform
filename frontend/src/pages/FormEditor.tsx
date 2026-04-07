@@ -47,7 +47,7 @@ function newAnswerLabelRule(): FlowRule {
     action: { kind: "SEND_EMAIL", emails: [], subject: "" },
   };
 }
-function parseEmailList(values: string[]): string[] {
+function parseWebhookList(values: string[]): string[] {
   return values
     .join("\n")
     .split(/[,;\n]+/)
@@ -155,7 +155,7 @@ export default function FormEditor() {
       const quotaEntities = quotaDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       await api(`/api/forms/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...meta, notifyEmails: parseEmailList(meta.notifyEmails), quotaEntities }),
+        body: JSON.stringify({ ...meta, notifyEmails: parseWebhookList(meta.notifyEmails), quotaEntities }),
       });
       await api(`/api/forms/${id}/questions`, { method: "PUT", body: JSON.stringify(questions) });
       await api(`/api/forms/${id}/flows`, {
@@ -175,7 +175,7 @@ export default function FormEditor() {
             : { ...r.condition, questionIds: r.condition.questionIds.filter(Boolean), expectedLabel: r.condition.expectedLabel.trim() },
           action: {
             ...r.action,
-            emails: parseEmailList(r.action.emails ?? []),
+            emails: parseWebhookList(r.action.emails ?? []),
           },
         }))),
       });
@@ -230,10 +230,10 @@ export default function FormEditor() {
     if (rule.condition.kind === "MISSING_ENTITY_QUOTA") {
       const qTitle = questionTitleById.get(rule.condition.questionId) ?? "seçili varlık";
       const d = (rule.condition.weekdays ?? [1, 2, 3, 4, 5, 6]).map(weekdayLong).join(", ");
-      return `${rule.condition.periodValue} ${periodText(rule.condition.periodUnit)} "${qTitle}" sorusundaki secili her varlik icin 1 kayit bekle; ${d} gunlerinde eksik olanlari ${parseEmailList(rule.action.emails ?? []).length} kisiye bildir.`;
+      return `${rule.condition.periodValue} ${periodText(rule.condition.periodUnit)} "${qTitle}" sorusundaki secili her varlik icin 1 kayit bekle; ${d} gunlerinde eksik olanlari ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildir.`;
     }
     const names = rule.condition.questionIds.map((id) => questionTitleById.get(id) ?? "isimsiz soru").join(", ");
-    return `"${names || "soru seçin"}" sorularında "${rule.condition.expectedLabel || "değer"}" ${rule.condition.mode === "ALL" ? "hepsinde" : "en az birinde"} seçilirse ${parseEmailList(rule.action.emails ?? []).length} kişiye mail at.`;
+    return `"${names || "soru seçin"}" sorularında "${rule.condition.expectedLabel || "değer"}" ${rule.condition.mode === "ALL" ? "hepsinde" : "en az birinde"} seçilirse ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildirim at.`;
   };
 
   if (loading) return <div className="layout">Yükleniyor...</div>;
@@ -343,10 +343,10 @@ export default function FormEditor() {
 
               <div style={{ marginBottom: "1rem", padding: "1rem", background: "var(--surface2)", borderRadius: "8px", border: "1px solid var(--border)" }}>
                 <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--primary)", marginBottom: "0.5rem" }}>Genel bildirim adresleri</div>
-                <label>Mail adresleri (virgülle)</label>
+                <label>Teams webhook URL'leri (virgül/satır ile)</label>
                 <input
                   className="input"
-                  placeholder="x@firma.com, y@firma.com"
+                  placeholder="https://...webhook1, https://...webhook2"
                   value={meta.notifyEmails.length <= 1 ? (meta.notifyEmails[0] ?? "") : meta.notifyEmails.join(", ")}
                   onChange={(e) => setMeta((m) => ({ ...m, notifyEmails: [e.target.value] }))}
                 />
@@ -452,11 +452,11 @@ export default function FormEditor() {
                             />
                           );
                         })()}
-                        <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Mail alıcıları" />
+                        <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Teams webhook URL(ler)i" />
                       </div>
                     ) : (
                       <div style={{ display: "grid", gap: "0.5rem" }}>
-                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Seçili sorularda belirli şık işaretlenirse gönderim anında mail atar.</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Seçili sorularda belirli şık işaretlenirse gönderim anında webhooka bildirim atar.</div>
                         <label style={{ fontSize: "0.85rem" }}>Sorular</label>
                         <div style={{ maxHeight: 120, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem" }}>
                           {eligibleChoiceQuestions.length === 0 && <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Önce tekli/çoklu seçim sorusu ekleyin.</div>}
@@ -481,7 +481,7 @@ export default function FormEditor() {
                           <option value="ANY">En az bir soruda seçilirse</option>
                           <option value="ALL">Tüm seçili sorularda seçilirse</option>
                         </select>
-                        <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Mail alıcıları" />
+                        <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Teams webhook URL(ler)i" />
                       </div>
                     )}
 
