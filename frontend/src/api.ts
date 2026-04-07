@@ -11,6 +11,39 @@ export function setToken(t: string | null) {
   else localStorage.removeItem("kyk_token");
 }
 
+function base64UrlToUtf8(input: string): string {
+  const s = input.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  const raw = atob(s + pad);
+  // atob -> latin1; utf8'e cevir
+  try {
+    return decodeURIComponent(
+      raw
+        .split("")
+        .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join("")
+    );
+  } catch {
+    return raw;
+  }
+}
+
+export function getTokenPayload(): { sub?: string; email?: string; role?: string } | null {
+  const t = getToken();
+  if (!t) return null;
+  const parts = t.split(".");
+  if (parts.length < 2) return null;
+  try {
+    return JSON.parse(base64UrlToUtf8(parts[1])) as { sub?: string; email?: string; role?: string };
+  } catch {
+    return null;
+  }
+}
+
+export function isAdminToken(): boolean {
+  return (getTokenPayload()?.role ?? "") === "ADMIN";
+}
+
 export async function api<T>(
   path: string,
   opts: RequestInit & { auth?: boolean } = {}

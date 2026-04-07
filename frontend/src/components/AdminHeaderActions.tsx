@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { LogOut, Settings2 } from "lucide-react";
-import { setToken } from "../api";
+import { isAdminToken, setToken } from "../api";
 
 export function AdminHeaderActions() {
   const [open, setOpen] = useState(false);
@@ -69,8 +69,8 @@ export function AdminHeaderActions() {
             }}
           >
             {menuItem("/", "Form listesi")}
-            {menuItem("/users", "Kullanıcılar")}
-            {menuItem("/firewall", "Firewall")}
+            {isAdminToken() && menuItem("/users", "Kullanıcılar")}
+            {isAdminToken() && menuItem("/firewall", "Firewall")}
           </div>
         )}
       </div>

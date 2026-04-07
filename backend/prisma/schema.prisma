@@ -7,11 +7,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum AdminRole {
+  ADMIN
+  USER
+}
+
 model Admin {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String    @id @default(cuid())
+  email        String    @unique
+  role         AdminRole @default(ADMIN)
   passwordHash String
-  createdAt    DateTime @default(now())
+  totpEnabled  Boolean   @default(false)
+  /// base32 (Google Authenticator / TOTP). Enabled ise dolu olmalı.
+  totpSecret   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }
 
 model FirewallConfig {

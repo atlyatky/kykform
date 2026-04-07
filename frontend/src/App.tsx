@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { getToken } from "./api";
+import { getToken, isAdminToken } from "./api";
 import FormDashboard from "./pages/FormDashboard";
 import FormEditor from "./pages/FormEditor";
 import FormList from "./pages/FormList";
@@ -11,6 +11,10 @@ import UsersPage from "./pages/UsersPage";
 function Protected({ element }: { element: JSX.Element }) {
   return getToken() ? element : <Navigate to="/login" replace />;
 }
+function AdminOnly({ element }: { element: JSX.Element }) {
+  if (!getToken()) return <Navigate to="/login" replace />;
+  return isAdminToken() ? element : <Navigate to="/" replace />;
+}
 
 export default function App() {
   return (
@@ -20,8 +24,8 @@ export default function App() {
       <Route path="/" element={<Protected element={<FormList />} />} />
       <Route path="/forms/:id/edit" element={<Protected element={<FormEditor />} />} />
       <Route path="/forms/:id/dashboard" element={<Protected element={<FormDashboard />} />} />
-      <Route path="/users" element={<Protected element={<UsersPage />} />} />
-      <Route path="/firewall" element={<Protected element={<FirewallPage />} />} />
+      <Route path="/users" element={<AdminOnly element={<UsersPage />} />} />
+      <Route path="/firewall" element={<AdminOnly element={<FirewallPage />} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

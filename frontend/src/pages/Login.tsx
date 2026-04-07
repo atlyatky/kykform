@@ -1,24 +1,33 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, setToken } from "../api";
+import { apiBaseUrl, setToken } from "../api";
 import { BrandLogo } from "../components/BrandLogo";
 
 export default function Login() {
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [needOtp, setNeedOtp] = useState(false);
   const [err, setErr] = useState("");
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setErr("");
     try {
-      const r = await api<{ token: string }>("/api/auth/login", {
+      const res = await fetch(`${apiBaseUrl}/api/auth/login`, {
         method: "POST",
-        body: JSON.stringify({ email, password }),
-        auth: false,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, otp: otp || undefined }),
       });
-      setToken(r.token);
+      const raw = await res.text();
+      const j = raw ? (JSON.parse(raw) as { token?: string; error?: string; requiresTotp?: boolean }) : {};
+      if (!res.ok) {
+        setNeedOtp(Boolean(j.requiresTotp));
+        throw new Error(j.error || res.statusText || "Hata");
+      }
+      if (!j.token) throw new Error("Token yok");
+      setToken(j.token);
       nav("/");
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : "Hata");
@@ -49,6 +58,23 @@ export default function Login() {
               required
             />
           </div>
+          {needOtp && (
+            <div style={{ marginBottom: "1rem" }}>
+              <label>Authenticator Kodu</label>
+              <input
+                className="input"
+                inputMode="numeric"
+                placeholder="123 456"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+                autoComplete="one-time-code"
+                required
+              />
+              <div style={{ color: "var(--muted)", fontSize: "0.85rem", marginTop: "0.35rem" }}>
+                Google Authenticator / Authy / Microsoft Authenticator
+              </div>
+            </div>
+          )}
           {err && (
             <p style={{ color: "var(--danger)", fontSize: "0.9rem" }} role="alert">
               {err}

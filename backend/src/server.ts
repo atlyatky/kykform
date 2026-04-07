@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { nanoid } from "nanoid";
 import QRCode from "qrcode";
+import speakeasy from "speakeasy";
 import { z } from "zod";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth.js";
 import { sendMail } from "./mail.js";
@@ -20,14 +21,27 @@ const publicBase = process.env.PUBLIC_FORM_BASE_URL ?? "http://localhost:5173";
 
 function authMiddleware(req: express.Request, _res: express.Response, next: express.NextFunction) {
   const p = verifyToken(req.headers.authorization);
-  if (p) (req as express.Request & { adminId: string }).adminId = p.sub;
+  if (p) {
+    (req as express.Request & { adminId: string; role?: string }).adminId = p.sub;
+    (req as express.Request & { adminId: string; role?: string }).role = p.role;
+  }
   next();
 }
-function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const adminId = (req as express.Request & { adminId?: string }).adminId;
   if (!adminId) return res.status(401).json({ error: "Oturum gerekli" });
   next();
 }
+async function requireRole(role: "ADMIN" | "USER", req: express.Request, res: express.Response, next: express.NextFunction) {
+  const adminId = (req as express.Request & { adminId?: string }).adminId;
+  if (!adminId) return res.status(401).json({ error: "Oturum gerekli" });
+  const row = await prisma.admin.findUnique({ where: { id: adminId }, select: { role: true } });
+  if (!row) return res.status(401).json({ error: "Oturum gerekli" });
+  if (row.role !== role) return res.status(403).json({ error: "Bu sayfaya sadece admin girebilir" });
+  next();
+}
+const requireAdminRole = (req: express.Request, res: express.Response, next: express.NextFunction) =>
+  void requireRole("ADMIN", req, res, next);
 
 type FirewallPageKey = "HOME" | "FORM_EDITOR" | "FORM_DASHBOARD";
 type FirewallRule = { enabled: boolean; ips: string[] };
@@ -236,31 +250,91 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const body = z.object({ email: z.string().min(1), password: z.string() }).safeParse(req.body);
+  const body = z.object({ email: z.string().min(1), password: z.string(), otp: z.string().optional() }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
   const admin = await prisma.admin.findUnique({ where: { email: body.data.email.toLowerCase() } });
   if (!admin || !(await verifyPassword(body.data.password, admin.passwordHash))) {
     return res.status(401).json({ error: "Kullanici veya sifre hatali" });
   }
-  res.json({ token: signToken(admin.id, admin.email), email: admin.email });
+  if (admin.totpEnabled) {
+    const otp = (body.data.otp ?? "").replace(/\s+/g, "");
+    if (!otp) return res.status(401).json({ error: "2FA gerekli", requiresTotp: true });
+    if (!admin.totpSecret) return res.status(401).json({ error: "2FA ayari bozuk", requiresTotp: true });
+    const ok = speakeasy.totp.verify({
+      secret: admin.totpSecret,
+      encoding: "base32",
+      token: otp,
+      window: 1,
+    });
+    if (!ok) return res.status(401).json({ error: "2FA kodu hatali", requiresTotp: true });
+  }
+  res.json({ token: signToken(admin.id, admin.email, admin.role), email: admin.email, role: admin.role });
 });
 
-app.get("/api/admin/users", authMiddleware, requireAdmin, async (_req, res) => {
-  const admins = await prisma.admin.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, email: true, createdAt: true } });
+app.get("/api/admin/users", authMiddleware, requireAdminRole, async (_req, res) => {
+  const admins = await prisma.admin.findMany({
+    orderBy: { createdAt: "asc" },
+    select: { id: true, email: true, createdAt: true, role: true, totpEnabled: true },
+  });
   res.json(admins);
 });
 
-app.post("/api/admin/users", authMiddleware, requireAdmin, async (req, res) => {
-  const body = z.object({ email: z.string().email(), password: z.string().min(6) }).safeParse(req.body);
+app.post("/api/admin/users", authMiddleware, requireAdminRole, async (req, res) => {
+  const body = z.object({ email: z.string().email(), password: z.string().min(6), role: z.enum(["ADMIN", "USER"]).optional() }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Gecersiz veri" });
   const email = body.data.email.toLowerCase();
   const exists = await prisma.admin.findUnique({ where: { email } });
   if (exists) return res.status(400).json({ error: "Bu e-posta zaten kayitli" });
-  const created = await prisma.admin.create({ data: { email, passwordHash: await hashPassword(body.data.password) } });
-  res.status(201).json({ id: created.id, email: created.email });
+  const created = await prisma.admin.create({
+    data: { email, passwordHash: await hashPassword(body.data.password), role: body.data.role ?? "USER" },
+  });
+  res.status(201).json({ id: created.id, email: created.email, role: created.role });
 });
 
-app.delete("/api/admin/users/:id", authMiddleware, requireAdmin, async (req, res) => {
+app.put("/api/admin/users/:id/password", authMiddleware, requireAdminRole, async (req, res) => {
+  const body = z.object({ password: z.string().min(6) }).safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: "Gecersiz veri" });
+  try {
+    await prisma.admin.update({ where: { id: req.params.id }, data: { passwordHash: await hashPassword(body.data.password) } });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: "Kullanici bulunamadi" });
+  }
+});
+
+app.post("/api/admin/users/:id/2fa/setup", authMiddleware, requireAdminRole, async (req, res) => {
+  const row = await prisma.admin.findUnique({ where: { id: req.params.id }, select: { email: true } });
+  if (!row) return res.status(404).json({ error: "Kullanici bulunamadi" });
+  const secret = speakeasy.generateSecret({ name: `KYK Form (${row.email})` });
+  await prisma.admin.update({ where: { id: req.params.id }, data: { totpEnabled: false, totpSecret: secret.base32 } });
+  const otpauthUrl = secret.otpauth_url || "";
+  const qrDataUrl = otpauthUrl ? await QRCode.toDataURL(otpauthUrl) : "";
+  res.json({ otpauthUrl, qrDataUrl });
+});
+
+app.post("/api/admin/users/:id/2fa/enable", authMiddleware, requireAdminRole, async (req, res) => {
+  const body = z.object({ otp: z.string().min(4) }).safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: "Gecersiz veri" });
+  const row = await prisma.admin.findUnique({ where: { id: req.params.id }, select: { totpSecret: true } });
+  if (!row?.totpSecret) return res.status(400).json({ error: "Önce 2FA kurulumunu başlatın" });
+  const otp = body.data.otp.replace(/\s+/g, "");
+  const ok = speakeasy.totp.verify({ secret: row.totpSecret, encoding: "base32", token: otp, window: 1 });
+  if (!ok) return res.status(400).json({ error: "Kod hatali" });
+  await prisma.admin.update({ where: { id: req.params.id }, data: { totpEnabled: true } });
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/users/:id/2fa/disable", authMiddleware, requireAdminRole, async (req, res) => {
+  void req;
+  try {
+    await prisma.admin.update({ where: { id: req.params.id }, data: { totpEnabled: false, totpSecret: null } });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: "Kullanici bulunamadi" });
+  }
+});
+
+app.delete("/api/admin/users/:id", authMiddleware, requireAdminRole, async (req, res) => {
   const me = (req as express.Request & { adminId?: string }).adminId!;
   if (req.params.id === me) return res.status(400).json({ error: "Kendi kullanicinizi silemezsiniz" });
   const total = await prisma.admin.count();
@@ -273,11 +347,11 @@ app.delete("/api/admin/users/:id", authMiddleware, requireAdmin, async (req, res
   }
 });
 
-app.get("/api/firewall", authMiddleware, requireAdmin, async (_req, res) => {
+app.get("/api/firewall", authMiddleware, requireAdminRole, async (_req, res) => {
   res.json(await getFirewallConfig());
 });
 
-app.put("/api/firewall", authMiddleware, requireAdmin, async (req, res) => {
+app.put("/api/firewall", authMiddleware, requireAdminRole, async (req, res) => {
   const rulesSchema = z.object({
     HOME: z.object({ enabled: z.boolean(), ips: z.array(z.string()) }),
     FORM_EDITOR: z.object({ enabled: z.boolean(), ips: z.array(z.string()) }),
@@ -309,7 +383,7 @@ app.put("/api/firewall", authMiddleware, requireAdmin, async (req, res) => {
   res.json({ rules: cleanedRules, ipPool: cleanedPool });
 });
 
-app.get("/api/forms", authMiddleware, requireAdmin, async (req, res) => {
+app.get("/api/forms", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "HOME")) return;
   const forms = await prisma.form.findMany({
     orderBy: { updatedAt: "desc" },
@@ -334,7 +408,7 @@ app.get("/api/forms", authMiddleware, requireAdmin, async (req, res) => {
   })));
 });
 
-app.post("/api/forms", authMiddleware, requireAdmin, async (req, res) => {
+app.post("/api/forms", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "HOME")) return;
   const body = z.object({ title: z.string().min(1),
   description: z.string().optional() }).safeParse(req.body);
@@ -389,14 +463,14 @@ function serializeForm(form: {
   };
 }
 
-app.get("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
+app.get("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id }, include: { questions: { orderBy: { orderIndex: "asc" } } } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
   res.json(serializeForm(form));
 });
 
-app.patch("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
+app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const body = z.object({
     title: z.string().min(1).optional(),
@@ -433,7 +507,7 @@ app.patch("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/forms/:id/flows", authMiddleware, requireAdmin, async (req, res) => {
+app.get("/api/forms/:id/flows", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
@@ -451,7 +525,7 @@ app.get("/api/forms/:id/flows", authMiddleware, requireAdmin, async (req, res) =
   );
 });
 
-app.put("/api/forms/:id/flows", authMiddleware, requireAdmin, async (req, res) => {
+app.put("/api/forms/:id/flows", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const parsed = z.array(flowRuleInputSchema).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Geçersiz akış listesi" });
@@ -498,7 +572,7 @@ app.put("/api/forms/:id/flows", authMiddleware, requireAdmin, async (req, res) =
   );
 });
 
-app.put("/api/forms/:id/questions", authMiddleware, requireAdmin, async (req, res) => {
+app.put("/api/forms/:id/questions", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const parsed = z.array(questionInputSchema).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Geçersiz soru listesi" });
@@ -536,7 +610,7 @@ app.put("/api/forms/:id/questions", authMiddleware, requireAdmin, async (req, re
   res.json(serializeForm(updated!));
 });
 
-app.delete("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
+app.delete("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "HOME")) return;
   try {
     await prisma.form.delete({ where: { id: req.params.id } });
@@ -546,7 +620,7 @@ app.delete("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/forms/:id/qr", authMiddleware, requireAdmin, async (req, res) => {
+app.get("/api/forms/:id/qr", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "HOME")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
@@ -556,7 +630,7 @@ app.get("/api/forms/:id/qr", authMiddleware, requireAdmin, async (req, res) => {
   else res.type("svg").send(await QRCode.toString(url, { type: "svg" }));
 });
 
-app.get("/api/forms/:id/stats", authMiddleware, requireAdmin, async (req, res) => {
+app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_DASHBOARD")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id }, include: { questions: { orderBy: { orderIndex: "asc" } }, submissions: { orderBy: { createdAt: "asc" } } } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
@@ -674,6 +748,7 @@ async function ensureDefaultAdmin() {
     data: {
       email: "admin",
       passwordHash: await hashPassword("admin123"),
+      role: "ADMIN",
     },
   });
   console.log("Varsayilan admin olusturuldu: admin / admin123");
