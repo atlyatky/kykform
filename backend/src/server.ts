@@ -305,10 +305,22 @@ app.put("/api/admin/users/:id/password", authMiddleware, requireAdminRole, async
 app.post("/api/admin/users/:id/2fa/setup", authMiddleware, requireAdminRole, async (req, res) => {
   const row = await prisma.admin.findUnique({ where: { id: req.params.id }, select: { email: true } });
   if (!row) return res.status(404).json({ error: "Kullanici bulunamadi" });
-  const secret = speakeasy.generateSecret({ name: `KYK Form (${row.email})` });
+  const secret = speakeasy.generateSecret({ length: 20 });
+  const label = `KYK Form:${row.email}`;
+  const otpauthUrl =
+    speakeasy.otpauthURL({
+      secret: secret.ascii,
+      label,
+      issuer: "KYK Form",
+      encoding: "ascii",
+    }) || "";
   await prisma.admin.update({ where: { id: req.params.id }, data: { totpEnabled: false, totpSecret: secret.base32 } });
-  const otpauthUrl = secret.otpauth_url || "";
-  const qrDataUrl = otpauthUrl ? await QRCode.toDataURL(otpauthUrl) : "";
+  let qrDataUrl = "";
+  try {
+    if (otpauthUrl) qrDataUrl = await QRCode.toDataURL(otpauthUrl);
+  } catch {
+    qrDataUrl = "";
+  }
   res.json({ otpauthUrl, qrDataUrl });
 });
 
