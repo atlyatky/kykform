@@ -601,6 +601,19 @@ app.put("/api/forms/:id/flows", authMiddleware, requireAuth, async (req, res) =>
   );
 });
 
+app.post("/api/notify/test", authMiddleware, requireAuth, async (req, res) => {
+  const body = z.object({
+    urls: z.array(z.string().url()).min(1),
+    subject: z.string().optional(),
+    message: z.string().optional(),
+  }).safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: "Gecersiz test bildirimi" });
+  const subject = body.data.subject?.trim() || "KYK Form Test Bildirimi";
+  const message = body.data.message?.trim() || `Bu bir test bildirimi.\nSaat: ${new Date().toISOString()}`;
+  await notify(body.data.urls, subject, message);
+  res.json({ ok: true, count: body.data.urls.length });
+});
+
 app.put("/api/forms/:id/questions", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const parsed = z.array(questionInputSchema).safeParse(req.body);

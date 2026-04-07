@@ -239,6 +239,19 @@ export default function FormEditor() {
       return { ...x, action: { ...x.action, messageTemplate: `${curr}${sep}${tag}` } };
     }));
   };
+  const sendTest = async (urls: string[], subject?: string, message?: string) => {
+    const parsed = parseWebhookList(urls);
+    if (parsed.length === 0) return alert("Önce en az 1 webhook URL girin.");
+    try {
+      await api("/api/notify/test", {
+        method: "POST",
+        body: JSON.stringify({ urls: parsed, subject, message }),
+      });
+      alert("Test bildirimi gönderildi.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Test gönderimi başarısız");
+    }
+  };
   const ruleSentence = (rule: FlowRule) => {
     if (rule.condition.kind === "MISSING_ENTITY_QUOTA") {
       const qTitle = questionTitleById.get(rule.condition.questionId) ?? "seçili varlık";
@@ -372,6 +385,15 @@ export default function FormEditor() {
                     onChange={(e) => setMeta((m) => ({ ...m, notifyAt: e.target.value || "09:00" }))}
                   />
                 </div>
+                <div style={{ marginTop: "0.5rem" }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void sendTest(meta.notifyEmails, `[Test] ${meta.title || "Form"}`, `Form bazlı test bildirimi\nSaat: ${meta.notifyAt || "09:00"}`)}
+                  >
+                    Test Gönder
+                  </button>
+                </div>
                 <div style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: "var(--muted)" }}>
                   Not: Bu bölümde form bazlı kota kontrolü seçtiğiniz saatte çalışır.
                 </div>
@@ -487,6 +509,13 @@ export default function FormEditor() {
                           );
                         })()}
                         <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Teams webhook URL(ler)i" />
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void sendTest(rule.action.emails ?? [], `[Test] ${rule.name || "Kural"}`, (rule.action.messageTemplate || "").trim() || "Kural test bildirimi")}
+                        >
+                          Test Gönder
+                        </button>
                       </div>
                     ) : (
                       <div style={{ display: "grid", gap: "0.5rem" }}>
@@ -516,6 +545,13 @@ export default function FormEditor() {
                           <option value="ALL">Tüm seçili sorularda seçilirse</option>
                         </select>
                         <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Teams webhook URL(ler)i" />
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void sendTest(rule.action.emails ?? [], `[Test] ${rule.name || "Kural"}`, (rule.action.messageTemplate || "").trim() || "Kural test bildirimi")}
+                        >
+                          Test Gönder
+                        </button>
                       </div>
                     )}
 
