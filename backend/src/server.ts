@@ -262,15 +262,13 @@ async function runSubmitFlowRules(params: {
         const answer = formatAnswerForReport(q, params.answers[q.id]);
         const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
         const isNonConforming = condition.questionIds.includes(q.id) && selected.includes(expected);
-        return `${isNonConforming ? "🔴" : "🟢"} ${q.title || q.id}\n${answer || "(bos)"}`;
+        const mark = answer === "(bos)" ? "⚪" : isNonConforming ? "🔴" : "🟢";
+        return `${q.title || q.id}\n${mark} ${answer || "(bos)"}`;
       });
     const defaultBody =
-      `Form: ${params.form.title}\n` +
-      `Kural: ${rule.name}\n` +
       `Tarih: ${new Date().toLocaleDateString("tr-TR")}\n` +
       `Saat: ${new Date().toLocaleTimeString("tr-TR")}\n` +
-      `Gonderim ID: ${params.submissionId}\n` +
-      `Tetikleyen kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.\n\n` +
+      `Form Adı: ${params.form.title}\n\n` +
       `Formun Dolu Görünümü:\n\n` +
       `${reportLines.join("\n\n")}`;
     await notify(action.emails, subject, defaultBody);
