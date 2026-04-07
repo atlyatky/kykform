@@ -100,6 +100,7 @@ async function runFlowRules(now: Date) {
     }
 
     const counts = new Map<string, number>();
+    const latestByEntity = new Map<string, Date>();
     for (const s of subs) {
       let answers: Record<string, unknown> = {};
       try {
@@ -110,6 +111,8 @@ async function runFlowRules(now: Date) {
       const key = entityKeyFromAnswers(answers, condition.questionId);
       if (!key) continue;
       counts.set(key, (counts.get(key) ?? 0) + 1);
+      const prev = latestByEntity.get(key);
+      if (!prev || s.createdAt > prev) latestByEntity.set(key, s.createdAt);
     }
 
     const targets = (condition.entities ?? []).map((x) => x.trim()).filter(Boolean);
@@ -123,7 +126,11 @@ async function runFlowRules(now: Date) {
       const c = counts.get(ent) ?? 0;
       const label = optionLabelById.get(ent) ?? ent;
       const ok = c >= condition.minCount;
-      statusRows.push(`| ${ok ? "Dolduruldu ✅" : "Doldurulmadi ❌"} | ${label} | ${c} / ${condition.minCount} |`);
+      const latest = latestByEntity.get(ent);
+      const timeText = latest
+        ? latest.toISOString().slice(11, 16)
+        : "-";
+      statusRows.push(`| ${label} | ${ok ? "Dolduruldu ✅" : "Doldurulmadi ❌"} | ${timeText} |`);
       if (c < condition.minCount) {
         deficits.push(`  • ${label}: ${c} / ${condition.minCount}`);
       }
@@ -137,7 +144,7 @@ async function runFlowRules(now: Date) {
       `Rapor saati: ${condition.reportTime ?? "09:00"}`,
       `Dönem başlangıcı: ${start.toISOString()}`,
       "",
-      "| Durum | Varlik | Gerceklesen |",
+      "| Varlik | Durum | Gelis saati |",
       "|---|---|---|",
       ...statusRows,
       deficits.length > 0 ? `\nEksik varlik sayisi: ${deficits.length}` : "\nTum varliklar hedefi karsiladi ✅",
