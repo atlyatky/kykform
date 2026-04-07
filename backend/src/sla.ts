@@ -1,6 +1,6 @@
 ﻿import type { Form } from "@prisma/client";
 import { prisma } from "./prisma.js";
-import { sendMail } from "./mail.js";
+import { notify } from "./notify.js";
 
 function parseEmails(json: string): string[] {
   try {
@@ -153,7 +153,7 @@ async function runFlowRules(now: Date) {
     const body =
       `Form: ${rule.form.title}\nKural: ${rule.name}\nDönem başlangıcı: ${start.toISOString()}\n\nEksik kayıtlar:\n${deficits.join("\n")}`;
 
-    await sendMail(action.emails, subject, body);
+    await notify(subject, body);
     await prisma.formFlowRule.update({ where: { id: rule.id }, data: { lastFiredAt: now } });
   }
 }
@@ -167,6 +167,8 @@ export async function runSlaCheckOnce() {
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   for (const form of forms) {
+    // Teams bildiriminde alici listesi yok; yine de eski kurgu bozulmasin diye boşsa atlama.
+    // notifyEmails alanini ileride kaldirabiliriz.
     if (!form.notifyEmails || form.notifyEmails === "[]") continue;
 
     const start = periodStartUtc(form, now);
@@ -221,8 +223,7 @@ export async function runSlaCheckOnce() {
           ? `Varlık başına (soru ID: ${form.quotaQuestionId}) en az ${expected} yanıt bekleniyor.\nEksikler:\n${deficitLines.join("\n")}`
           : `Son ${form.periodValue} ${unitStr} içinde en az ${expected} toplam yanıt bekleniyor.\n${deficitLines.join("\n")}`;
 
-        await sendMail(
-          recipients,
+        await notify(
           `[KYK Form] Eksik kota: ${form.title}`,
           `"${form.title}" formu için kota altında kayıt var.\n\n${scope}\n\nDönem başı: ${start.toISOString()}`
         );

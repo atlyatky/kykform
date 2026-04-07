@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import speakeasy from "speakeasy";
 import { z } from "zod";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth.js";
-import { sendMail } from "./mail.js";
+import { notify } from "./notify.js";
 import { prisma } from "./prisma.js";
 import { runSlaCheckOnce } from "./sla.js";
 
@@ -232,7 +232,7 @@ async function runSubmitFlowRules(params: {
       `Kural: ${rule.name}\n` +
       `Gonderim ID: ${params.submissionId}\n` +
       `Kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.`;
-    await sendMail(action.emails, subject, body);
+    await notify(subject, body);
   }
 }
 
