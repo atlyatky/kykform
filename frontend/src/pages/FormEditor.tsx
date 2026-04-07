@@ -254,18 +254,27 @@ export default function FormEditor() {
   };
   const buildRuleTestPayload = (rule: FlowRule): { subject: string; message: string } => {
     if (rule.condition.kind === "ANSWER_LABEL_MATCH") {
+      const now = new Date();
       return {
         subject: "Uygunsuzluk Girişi Yapılmıştır",
         message: [
           "Form: TEST FORM",
           `Kural: ${rule.name || "Uygunsuz Şık"}`,
+          `Tarih: ${now.toLocaleDateString("tr-TR")}`,
+          `Saat: ${now.toLocaleTimeString("tr-TR")}`,
           "Gonderim ID: TEST-001",
           `Tetikleyen kosul: "${rule.condition.expectedLabel || "Uygunsuz"}" secildi.`,
           "",
-          "Form raporu:",
-          "- 🔴 UYGUNSUZ Kontrol Maddesi 1: Uygunsuz",
-          "- 🟢 Kontrol Maddesi 2: Uygun",
-          "- 🟢 Aciklama: Test aciklama metni",
+          "Formun Dolu Görünümü:",
+          "",
+          "🔴 Kontrol Maddesi 1",
+          "Uygunsuz",
+          "",
+          "🟢 Kontrol Maddesi 2",
+          "Uygun",
+          "",
+          "🟢 Aciklama",
+          "Test aciklama metni",
         ].join("\n"),
       };
     }
