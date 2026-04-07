@@ -175,11 +175,6 @@ function normalizeText(v: string): string {
   return v.trim().toLocaleLowerCase("tr");
 }
 
-function renderTemplate(template: string | undefined, tags: Record<string, string>, fallback: string): string {
-  if (!template || !template.trim()) return fallback;
-  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key: string) => tags[key] ?? `{${key}}`);
-}
-
 function extractSelectedLabels(
   q: { optionsJson: string },
   rawAnswer: unknown
@@ -278,14 +273,7 @@ async function runSubmitFlowRules(params: {
       `Tetikleyen kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.\n\n` +
       `Formun Dolu Görünümü:\n\n` +
       `${reportLines.join("\n\n")}`;
-    const body = renderTemplate(action.messageTemplate, {
-      formTitle: params.form.title,
-      ruleName: rule.name,
-      submissionId: params.submissionId,
-      expectedLabel: condition.expectedLabel,
-      mode: condition.mode === "ALL" ? "ALL" : "ANY",
-    }, defaultBody);
-    await notify(action.emails, subject, body);
+    await notify(action.emails, subject, defaultBody);
   }
 }
 

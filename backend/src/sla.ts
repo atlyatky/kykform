@@ -58,11 +58,6 @@ function shouldRunAtTime(now: Date, hhmm: string | undefined): boolean {
   return now.getHours() === h && now.getMinutes() === m;
 }
 
-function renderTemplate(template: string | undefined, tags: Record<string, string>, fallback: string): string {
-  if (!template || !template.trim()) return fallback;
-  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key: string) => tags[key] ?? `{${key}}`);
-}
-
 async function runFlowRules(now: Date) {
   const rules = await prisma.formFlowRule.findMany({
     where: { enabled: true, trigger: "ON_SCHEDULE", form: { published: true } },
@@ -149,15 +144,7 @@ async function runFlowRules(now: Date) {
       ...statusRows,
       deficits.length > 0 ? `\nEksik varlik sayisi: ${deficits.length}` : "\nTum varliklar hedefi karsiladi ✅",
     ].join("\n");
-    const body = renderTemplate(action.messageTemplate, {
-      formTitle: rule.form.title,
-      ruleName: rule.name,
-      periodStart: start.toISOString(),
-      deficits: deficits.join("\n"),
-      reportTime: condition.reportTime ?? "09:00",
-      reportTable: statusRows.join("\n"),
-    }, defaultBody);
-    await notify(action.emails, subject, body);
+    await notify(action.emails, subject, defaultBody);
     await prisma.formFlowRule.update({ where: { id: rule.id }, data: { lastFiredAt: now } });
   }
 }
