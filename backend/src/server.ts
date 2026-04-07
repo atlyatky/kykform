@@ -197,8 +197,35 @@ function extractSelectedLabels(
   return out;
 }
 
+function formatAnswerForReport(
+  q: { id: string; title: string; type: string; optionsJson: string; rowsJson?: string | null },
+  rawAnswer: unknown
+): string {
+  const options = JSON.parse(q.optionsJson || "[]") as Array<{ id: string; label: string }>;
+  const optionLabel = new Map(options.map((o) => [o.id, o.label || o.id]));
+  if (rawAnswer === undefined || rawAnswer === null || rawAnswer === "") return "(bos)";
+  if (typeof rawAnswer === "string") return optionLabel.get(rawAnswer) ?? rawAnswer;
+  if (typeof rawAnswer === "number" || typeof rawAnswer === "boolean") return String(rawAnswer);
+  if (Array.isArray(rawAnswer)) {
+    const arr = rawAnswer.map((x) => (typeof x === "string" ? (optionLabel.get(x) ?? x) : String(x)));
+    return arr.join(", ");
+  }
+  if (q.type === "GRID" && typeof rawAnswer === "object") {
+    const rows = JSON.parse(q.rowsJson || "[]") as Array<{ id: string; label: string }>;
+    const rowMap = rawAnswer as Record<string, unknown>;
+    return rows
+      .map((r) => `${r.label}: ${optionLabel.get(String(rowMap[r.id])) ?? String(rowMap[r.id] ?? "(bos)")}`)
+      .join(" | ");
+  }
+  try {
+    return JSON.stringify(rawAnswer);
+  } catch {
+    return String(rawAnswer);
+  }
+}
+
 async function runSubmitFlowRules(params: {
-  form: { id: string; title: string; questions: Array<{ id: string; optionsJson: string }> };
+  form: { id: string; title: string; questions: Array<{ id: string; title: string; type: string; optionsJson: string; rowsJson: string | null }> };
   answers: Record<string, unknown>;
   submissionId: string;
 }) {
@@ -233,12 +260,16 @@ async function runSubmitFlowRules(params: {
     const matched = condition.mode === "ALL" ? checks.every(Boolean) : checks.some(Boolean);
     if (!matched) continue;
 
-    const subject = action.subject?.trim() || `[KYK Form Kural] Kosul saglandi: ${params.form.title}`;
+    const subject = action.subject?.trim() || "Uygunsuzluk Girişi Yapılmıştır";
+    const reportLines = params.form.questions
+      .filter((q) => q.type !== "PAGE_BREAK")
+      .map((q) => `- ${q.title || q.id}: ${formatAnswerForReport(q, params.answers[q.id])}`);
     const defaultBody =
       `Form: ${params.form.title}\n` +
       `Kural: ${rule.name}\n` +
       `Gonderim ID: ${params.submissionId}\n` +
-      `Kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.`;
+      `Tetikleyen kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.\n\n` +
+      `Form raporu:\n${reportLines.join("\n")}`;
     const body = renderTemplate(action.messageTemplate, {
       formTitle: params.form.title,
       ruleName: rule.name,

@@ -404,7 +404,7 @@ export default function FormEditor() {
                   <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--primary)" }}>Akış kuralları</div>
                   <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
                     <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newMissingQuotaRule()])}><Plus size={14} /> Doldurulmadı</button>
-                    <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newAnswerLabelRule()])}><Plus size={14} /> Şık Seçildi</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newAnswerLabelRule()])}><Plus size={14} /> Uygunsuz Şık</button>
                   </div>
                 </div>
 
@@ -519,7 +519,7 @@ export default function FormEditor() {
                       </div>
                     ) : (
                       <div style={{ display: "grid", gap: "0.5rem" }}>
-                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Seçili sorularda belirli şık işaretlenirse gönderim anında webhooka bildirim atar.</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Seçili sorularda uygunsuz şık işaretlenirse gönderim anında form raporunu webhooka atar.</div>
                         <label style={{ fontSize: "0.85rem" }}>Sorular</label>
                         <div style={{ maxHeight: 120, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem" }}>
                           {eligibleChoiceQuestions.length === 0 && <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Önce tekli/çoklu seçim sorusu ekleyin.</div>}
