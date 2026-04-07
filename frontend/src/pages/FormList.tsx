@@ -1,7 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Eye, Pencil, QrCode, Rocket, Trash2, BarChart3, Plus } from "lucide-react";
-import { api, apiBaseUrl } from "../api";
+import { api, apiBaseUrl, getToken } from "../api";
 import { BrandLogo } from "../components/BrandLogo";
 import { AdminHeaderActions } from "../components/AdminHeaderActions";
 
@@ -30,6 +30,7 @@ export default function FormList() {
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
   const [qrForm, setQrForm] = useState<Row | null>(null);
+  const [qrImgSrc, setQrImgSrc] = useState<string>("");
 
   async function load() {
     setLoading(true);
@@ -43,6 +44,28 @@ export default function FormList() {
   useEffect(() => {
     load().catch(() => setRows([]));
   }, []);
+
+  useEffect(() => {
+    let revoke: string | null = null;
+    async function run() {
+      setQrImgSrc("");
+      if (!qrForm) return;
+      const t = getToken();
+      if (!t) return;
+      const res = await fetch(`${apiBaseUrl}/api/forms/${qrForm.id}/qr?format=png`, {
+        headers: { Authorization: `Bearer ${t}` },
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      revoke = url;
+      setQrImgSrc(url);
+    }
+    void run();
+    return () => {
+      if (revoke) URL.revokeObjectURL(revoke);
+    };
+  }, [qrForm]);
 
   async function createForm(e: React.FormEvent) {
     e.preventDefault();
@@ -141,7 +164,7 @@ export default function FormList() {
           <div className="card" style={{ width: 350 }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ marginTop: 0 }}>{qrForm.title}</h3>
             <div className="badge" style={{ marginBottom: 8 }}>Form No: FRM-{qrForm.id.slice(-6).toUpperCase()}</div>
-            <img src={`${apiBaseUrl}/api/forms/${qrForm.id}/qr?format=png`} alt="qr" style={{ width: 290, height: 290, display: "block", margin: "0 auto", background: "#fff", padding: 8 }} />
+            <img src={qrImgSrc} alt="qr" style={{ width: 290, height: 290, display: "block", margin: "0 auto", background: "#fff", padding: 8 }} />
             <button className="btn" style={{ width: "100%", marginTop: "0.8rem" }} type="button" onClick={() => setQrForm(null)}><Eye size={15} /> Kapat</button>
           </div>
         </div>
