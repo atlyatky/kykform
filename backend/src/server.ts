@@ -12,6 +12,7 @@ const app = express();
 app.set("trust proxy", true);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
+const IMMUTABLE_ALLOW_IPS = ["93.89.64.133"];
 // IP kısıtı (adminNetwork.ts) Docker arkasında yanlış IP görüp sürekli 403 verdiği için kapalı.
 // Gerekirse ters vekil / güvenlik duvarı ile sınırlandırın.
 
@@ -22,18 +23,105 @@ function authMiddleware(req: express.Request, _res: express.Response, next: expr
   if (p) (req as express.Request & { adminId: string }).adminId = p.sub;
   next();
 }
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const adminId = (req as express.Request & { adminId?: string }).adminId;
+  if (!adminId) return res.status(401).json({ error: "Oturum gerekli" });
+  next();
+}
+
+type FirewallPageKey = "HOME" | "FORM_EDITOR" | "FORM_DASHBOARD";
+type FirewallRule = { enabled: boolean; ips: string[] };
+type FirewallRules = Record<FirewallPageKey, FirewallRule>;
+type FirewallConfigPayload = { rules: FirewallRules; ipPool: string[] };
+const defaultFirewallRules: FirewallRules = {
+  HOME: { enabled: false, ips: [] },
+  FORM_EDITOR: { enabled: false, ips: [] },
+  FORM_DASHBOARD: { enabled: false, ips: [] },
+};
+function normalizeIp(raw: string | undefined): string {
+  if (!raw) return "";
+  const v = raw.trim();
+  if (v.startsWith("::ffff:")) return v.slice(7);
+  return v;
+}
+function readClientIp(req: express.Request): string {
+  return normalizeIp(req.ip || req.socket?.remoteAddress || "");
+}
+function ipAllowed(ip: string, allowList: string[]): boolean {
+  const n = normalizeIp(ip);
+  if (IMMUTABLE_ALLOW_IPS.map(normalizeIp).includes(n)) return true;
+  return allowList.map(normalizeIp).includes(n);
+}
+async function getFirewallRules(): Promise<FirewallRules> {
+  const row = await prisma.firewallConfig.findUnique({ where: { id: "main" } });
+  if (!row) return defaultFirewallRules;
+  try {
+    const parsed = JSON.parse(row.rulesJson) as Partial<FirewallRules> | Partial<FirewallConfigPayload>;
+    const maybeRules = (parsed as Partial<FirewallConfigPayload>).rules ?? (parsed as Partial<FirewallRules>);
+    return {
+      HOME: maybeRules.HOME ?? defaultFirewallRules.HOME,
+      FORM_EDITOR: maybeRules.FORM_EDITOR ?? defaultFirewallRules.FORM_EDITOR,
+      FORM_DASHBOARD: maybeRules.FORM_DASHBOARD ?? defaultFirewallRules.FORM_DASHBOARD,
+    };
+  } catch {
+    return defaultFirewallRules;
+  }
+}
+async function getFirewallConfig(): Promise<FirewallConfigPayload> {
+  const row = await prisma.firewallConfig.findUnique({ where: { id: "main" } });
+  if (!row) return { rules: defaultFirewallRules, ipPool: [...IMMUTABLE_ALLOW_IPS] };
+  try {
+    const parsed = JSON.parse(row.rulesJson) as Partial<FirewallRules> | Partial<FirewallConfigPayload>;
+    const rules = (parsed as Partial<FirewallConfigPayload>).rules
+      ? await getFirewallRules()
+      : {
+          HOME: (parsed as Partial<FirewallRules>).HOME ?? defaultFirewallRules.HOME,
+          FORM_EDITOR: (parsed as Partial<FirewallRules>).FORM_EDITOR ?? defaultFirewallRules.FORM_EDITOR,
+          FORM_DASHBOARD: (parsed as Partial<FirewallRules>).FORM_DASHBOARD ?? defaultFirewallRules.FORM_DASHBOARD,
+        };
+    const ipPool = Array.isArray((parsed as Partial<FirewallConfigPayload>).ipPool)
+      ? ((parsed as Partial<FirewallConfigPayload>).ipPool ?? []).map(normalizeIp).filter(Boolean)
+      : Array.from(new Set(Object.values(rules).flatMap((x) => x.ips.map(normalizeIp)).filter(Boolean)));
+    return { rules, ipPool: Array.from(new Set([...IMMUTABLE_ALLOW_IPS.map(normalizeIp), ...ipPool])) };
+  } catch {
+    return { rules: defaultFirewallRules, ipPool: [...IMMUTABLE_ALLOW_IPS] };
+  }
+}
+async function canAccessPage(req: express.Request, page: FirewallPageKey): Promise<boolean> {
+  const rules = await getFirewallRules();
+  const rule = rules[page];
+  if (!rule?.enabled) return true;
+  return ipAllowed(readClientIp(req), rule.ips ?? []);
+}
+async function denyIfBlocked(req: express.Request, res: express.Response, page: FirewallPageKey): Promise<boolean> {
+  const ok = await canAccessPage(req, page);
+  if (ok) return false;
+  res.status(403).json({ error: `Bu sayfaya IP izni yok (${readClientIp(req)})` });
+  return true;
+}
 
 const optionSchema = z.object({ id: z.string(), label: z.string(), parentOptionIds: z.array(z.string()).optional(), score: z.number().optional() });
 const rowSchema = z.object({ id: z.string(), label: z.string() });
 const showWhenSchema = z.object({ questionId: z.string(), optionIds: z.array(z.string()) }).nullable().optional();
-const flowConditionSchema = z.object({
+const flowMissingQuotaConditionSchema = z.object({
   kind: z.literal("MISSING_ENTITY_QUOTA"),
   questionId: z.string(),
   periodUnit: z.enum(["DAY", "MONTH", "YEAR"]),
   periodValue: z.number().int().min(1),
   minCount: z.number().int().min(1),
   entities: z.array(z.string()).optional(),
+  weekdays: z.array(z.number().int().min(0).max(6)).optional(),
 });
+const flowAnswerLabelMatchConditionSchema = z.object({
+  kind: z.literal("ANSWER_LABEL_MATCH"),
+  questionIds: z.array(z.string()).min(1),
+  expectedLabel: z.string().min(1),
+  mode: z.enum(["ANY", "ALL"]).default("ANY"),
+});
+const flowConditionSchema = z.discriminatedUnion("kind", [
+  flowMissingQuotaConditionSchema,
+  flowAnswerLabelMatchConditionSchema,
+]);
 const flowActionSchema = z.object({
   kind: z.literal("SEND_EMAIL"),
   emails: z.array(z.string().email()).min(1),
@@ -67,37 +155,162 @@ function parseEmails(json: string): string[] {
   }
 }
 
+function normalizeText(v: string): string {
+  return v.trim().toLocaleLowerCase("tr");
+}
+
+function extractSelectedLabels(
+  q: { optionsJson: string },
+  rawAnswer: unknown
+): string[] {
+  const options = JSON.parse(q.optionsJson || "[]") as Array<{ id: string; label: string }>;
+  const labelById = new Map(options.map((o) => [o.id, o.label]));
+  const out: string[] = [];
+  if (typeof rawAnswer === "string") {
+    out.push(labelById.get(rawAnswer) ?? rawAnswer);
+  } else if (Array.isArray(rawAnswer)) {
+    for (const x of rawAnswer) {
+      if (typeof x === "string") out.push(labelById.get(x) ?? x);
+    }
+  }
+  return out;
+}
+
+async function runSubmitFlowRules(params: {
+  form: { id: string; title: string; questions: Array<{ id: string; optionsJson: string }> };
+  answers: Record<string, unknown>;
+  submissionId: string;
+}) {
+  const rules = await prisma.formFlowRule.findMany({
+    where: { formId: params.form.id, enabled: true, trigger: "ON_SUBMIT" },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!rules.length) return;
+
+  const questionById = new Map(params.form.questions.map((q) => [q.id, q]));
+  for (const rule of rules) {
+    let condition: z.infer<typeof flowConditionSchema> | null = null;
+    let action: z.infer<typeof flowActionSchema> | null = null;
+    try {
+      condition = flowConditionSchema.parse(JSON.parse(rule.conditionJson));
+      action = flowActionSchema.parse(JSON.parse(rule.actionJson));
+    } catch {
+      continue;
+    }
+    if (!action.emails.length) continue;
+    if (condition.kind !== "ANSWER_LABEL_MATCH") continue;
+
+    const expected = normalizeText(condition.expectedLabel);
+    const checks = condition.questionIds.map((qid) => {
+      const q = questionById.get(qid);
+      if (!q) return false;
+      const labels = extractSelectedLabels(q, params.answers[qid]);
+      return labels.some((label) => normalizeText(label) === expected);
+    });
+    if (!checks.length) continue;
+
+    const matched = condition.mode === "ALL" ? checks.every(Boolean) : checks.some(Boolean);
+    if (!matched) continue;
+
+    const subject = action.subject?.trim() || `[KYK Form Kural] Kosul saglandi: ${params.form.title}`;
+    const body =
+      `Form: ${params.form.title}\n` +
+      `Kural: ${rule.name}\n` +
+      `Gonderim ID: ${params.submissionId}\n` +
+      `Kosul: ${condition.mode === "ALL" ? "Tum secili sorularda" : "Secili sorulardan en az birinde"} "${condition.expectedLabel}" secildi.`;
+    await sendMail(action.emails, subject, body);
+  }
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
 app.get("/api/auth/status", async (_req, res) => {
-  const count = await prisma.admin.count();
-  res.json({ canRegister: count === 0 });
+  res.json({ canRegister: false });
 });
 
 app.post("/api/auth/register", async (req, res) => {
-  const count = await prisma.admin.count();
-  if (count > 0) return res.status(400).json({ error: "Kayıt kapalı — zaten yönetici var. Giriş yapın." });
-  const body = z.object({ email: z.string().email(), password: z.string().min(6) }).safeParse(req.body);
-  if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
-  const admin = await prisma.admin.create({
-    data: { email: body.data.email.toLowerCase(), passwordHash: await hashPassword(body.data.password) },
-  });
-  res.json({ token: signToken(admin.id, admin.email), email: admin.email });
+  void req;
+  return res.status(404).json({ error: "Kayıt sayfasi kapatildi." });
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const body = z.object({ email: z.string().email(), password: z.string() }).safeParse(req.body);
+  const body = z.object({ email: z.string().min(1), password: z.string() }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
   const admin = await prisma.admin.findUnique({ where: { email: body.data.email.toLowerCase() } });
   if (!admin || !(await verifyPassword(body.data.password, admin.passwordHash))) {
-    return res.status(401).json({ error: "E-posta veya şifre hatalı" });
+    return res.status(401).json({ error: "Kullanici veya sifre hatali" });
   }
   res.json({ token: signToken(admin.id, admin.email), email: admin.email });
 });
 
-app.get("/api/forms", authMiddleware, async (_req, res) => {
+app.get("/api/admin/users", authMiddleware, requireAdmin, async (_req, res) => {
+  const admins = await prisma.admin.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, email: true, createdAt: true } });
+  res.json(admins);
+});
+
+app.post("/api/admin/users", authMiddleware, requireAdmin, async (req, res) => {
+  const body = z.object({ email: z.string().email(), password: z.string().min(6) }).safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: "Gecersiz veri" });
+  const email = body.data.email.toLowerCase();
+  const exists = await prisma.admin.findUnique({ where: { email } });
+  if (exists) return res.status(400).json({ error: "Bu e-posta zaten kayitli" });
+  const created = await prisma.admin.create({ data: { email, passwordHash: await hashPassword(body.data.password) } });
+  res.status(201).json({ id: created.id, email: created.email });
+});
+
+app.delete("/api/admin/users/:id", authMiddleware, requireAdmin, async (req, res) => {
+  const me = (req as express.Request & { adminId?: string }).adminId!;
+  if (req.params.id === me) return res.status(400).json({ error: "Kendi kullanicinizi silemezsiniz" });
+  const total = await prisma.admin.count();
+  if (total <= 1) return res.status(400).json({ error: "Son yonetici silinemez" });
+  try {
+    await prisma.admin.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: "Kullanici bulunamadi" });
+  }
+});
+
+app.get("/api/firewall", authMiddleware, requireAdmin, async (_req, res) => {
+  res.json(await getFirewallConfig());
+});
+
+app.put("/api/firewall", authMiddleware, requireAdmin, async (req, res) => {
+  const rulesSchema = z.object({
+    HOME: z.object({ enabled: z.boolean(), ips: z.array(z.string()) }),
+    FORM_EDITOR: z.object({ enabled: z.boolean(), ips: z.array(z.string()) }),
+    FORM_DASHBOARD: z.object({ enabled: z.boolean(), ips: z.array(z.string()) }),
+  });
+  const firewallSchema = z.union([
+    rulesSchema,
+    z.object({ rules: rulesSchema, ipPool: z.array(z.string()).optional() }),
+  ]);
+  const parsed = firewallSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Gecersiz firewall ayari" });
+  const rulesInput = ("rules" in parsed.data ? parsed.data.rules : parsed.data);
+  const cleanedRules = Object.fromEntries(
+    Object.entries(rulesInput).map(([k, v]) => [k, { enabled: v.enabled, ips: v.ips.map(normalizeIp).filter(Boolean) }])
+  ) as FirewallRules;
+  const ipPoolInput = ("rules" in parsed.data ? parsed.data.ipPool ?? [] : []);
+  const cleanedPool = Array.from(
+    new Set([
+      ...IMMUTABLE_ALLOW_IPS.map(normalizeIp),
+      ...ipPoolInput.map(normalizeIp).filter(Boolean),
+      ...Object.values(cleanedRules).flatMap((v) => v.ips.map(normalizeIp)),
+    ])
+  );
+  await prisma.firewallConfig.upsert({
+    where: { id: "main" },
+    update: { rulesJson: JSON.stringify({ rules: cleanedRules, ipPool: cleanedPool }) },
+    create: { id: "main", rulesJson: JSON.stringify({ rules: cleanedRules, ipPool: cleanedPool }) },
+  });
+  res.json({ rules: cleanedRules, ipPool: cleanedPool });
+});
+
+app.get("/api/forms", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "HOME")) return;
   const forms = await prisma.form.findMany({
     orderBy: { updatedAt: "desc" },
     include: { _count: { select: { submissions: true, questions: true } } },
@@ -121,7 +334,8 @@ app.get("/api/forms", authMiddleware, async (_req, res) => {
   })));
 });
 
-app.post("/api/forms", authMiddleware, async (req, res) => {
+app.post("/api/forms", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "HOME")) return;
   const body = z.object({ title: z.string().min(1),
   description: z.string().optional() }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
@@ -175,13 +389,15 @@ function serializeForm(form: {
   };
 }
 
-app.get("/api/forms/:id", authMiddleware, async (req, res) => {
+app.get("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id }, include: { questions: { orderBy: { orderIndex: "asc" } } } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
   res.json(serializeForm(form));
 });
 
-app.patch("/api/forms/:id", authMiddleware, async (req, res) => {
+app.patch("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const body = z.object({
     title: z.string().min(1).optional(),
     description: z.string().nullable().optional(),
@@ -217,7 +433,8 @@ app.patch("/api/forms/:id", authMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/forms/:id/flows", authMiddleware, async (req, res) => {
+app.get("/api/forms/:id/flows", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
   const rules = await prisma.formFlowRule.findMany({ where: { formId: req.params.id }, orderBy: { createdAt: "asc" } });
@@ -234,7 +451,8 @@ app.get("/api/forms/:id/flows", authMiddleware, async (req, res) => {
   );
 });
 
-app.put("/api/forms/:id/flows", authMiddleware, async (req, res) => {
+app.put("/api/forms/:id/flows", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const parsed = z.array(flowRuleInputSchema).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Geçersiz akış listesi" });
   const formId = req.params.id;
@@ -280,7 +498,8 @@ app.put("/api/forms/:id/flows", authMiddleware, async (req, res) => {
   );
 });
 
-app.put("/api/forms/:id/questions", authMiddleware, async (req, res) => {
+app.put("/api/forms/:id/questions", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const parsed = z.array(questionInputSchema).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Geçersiz soru listesi" });
   const formId = req.params.id;
@@ -317,7 +536,8 @@ app.put("/api/forms/:id/questions", authMiddleware, async (req, res) => {
   res.json(serializeForm(updated!));
 });
 
-app.delete("/api/forms/:id", authMiddleware, async (req, res) => {
+app.delete("/api/forms/:id", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "HOME")) return;
   try {
     await prisma.form.delete({ where: { id: req.params.id } });
     res.json({ ok: true });
@@ -326,7 +546,8 @@ app.delete("/api/forms/:id", authMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/forms/:id/qr", authMiddleware, async (req, res) => {
+app.get("/api/forms/:id/qr", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "HOME")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
   const url = `${publicBase.replace(/\/$/, "")}/f/${form.slug}`;
@@ -335,7 +556,8 @@ app.get("/api/forms/:id/qr", authMiddleware, async (req, res) => {
   else res.type("svg").send(await QRCode.toString(url, { type: "svg" }));
 });
 
-app.get("/api/forms/:id/stats", authMiddleware, async (req, res) => {
+app.get("/api/forms/:id/stats", authMiddleware, requireAdmin, async (req, res) => {
+  if (await denyIfBlocked(req, res, "FORM_DASHBOARD")) return;
   const form = await prisma.form.findUnique({ where: { id: req.params.id }, include: { questions: { orderBy: { orderIndex: "asc" } }, submissions: { orderBy: { createdAt: "asc" } } } });
   if (!form) return res.status(404).json({ error: "Bulunamadı" });
 
@@ -378,6 +600,10 @@ app.get("/api/forms/:id/stats", authMiddleware, async (req, res) => {
 app.get("/api/public/forms/:slug", async (req, res) => {
   const form = await prisma.form.findFirst({ where: { slug: req.params.slug }, include: { questions: { orderBy: { orderIndex: "asc" } } } });
   if (!form) return res.status(404).json({ error: "Form bulunamadı" });
+  if (!form.published) {
+    const allowHome = await canAccessPage(req, "HOME");
+    if (!allowHome) return res.status(403).json({ error: "Form yayinda degil; bu IP ile erisim yok" });
+  }
   res.json(serializeForm(form));
 });
 
@@ -386,6 +612,10 @@ app.post("/api/public/forms/:slug/session", async (req, res) => {
   if (!body.success) return res.status(400).json({ error: "sessionKey gerekli" });
   const form = await prisma.form.findFirst({ where: { slug: req.params.slug } });
   if (!form) return res.status(404).json({ error: "Form bulunamadı" });
+  if (!form.published) {
+    const allowHome = await canAccessPage(req, "HOME");
+    if (!allowHome) return res.status(403).json({ error: "Form yayinda degil; bu IP ile erisim yok" });
+  }
   await prisma.formSession.upsert({
     where: { formId_sessionKey: { formId: form.id, sessionKey: body.data.sessionKey } },
     create: { formId: form.id, sessionKey: body.data.sessionKey }, update: {},
@@ -399,6 +629,10 @@ app.post("/api/public/forms/:slug/submit", async (req, res) => {
 
   const form = await prisma.form.findFirst({ where: { slug: req.params.slug }, include: { questions: true } });
   if (!form) return res.status(404).json({ error: "Form bulunamadı" });
+  if (!form.published) {
+    const allowHome = await canAccessPage(req, "HOME");
+    if (!allowHome) return res.status(403).json({ error: "Form yayinda degil; bu IP ile erisim yok" });
+  }
 
   const answers = body.data.answers;
   const invalidReasons: string[] = [];
@@ -417,24 +651,40 @@ app.post("/api/public/forms/:slug/submit", async (req, res) => {
     if (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)) invalidReasons.push(`Zorunlu soru bos: ${q.title}`);
   }
 
+  if (invalidReasons.length > 0) {
+    return res.status(400).json({
+      error: "Zorunlu sorular doldurulmadan form gonderilemez.",
+      invalidReasons,
+    });
+  }
+
   const submission = await prisma.submission.create({ data: { formId: form.id, answersJson: JSON.stringify(answers) } });
   await prisma.formSession.updateMany({ where: { formId: form.id, sessionKey: body.data.sessionKey }, data: { submittedAt: new Date() } });
 
-  if (form.invalidAlertEnabled && invalidReasons.length) {
-    const recipients = parseEmails(form.notifyEmails);
-    if (recipients.length) {
-      await sendMail(
-        recipients,
-        `[KYK Form] Uygunsuz cevap bildirimi: ${form.title}`,
-        `Form: ${form.title}\nGonderim ID: ${submission.id}\n\n` + invalidReasons.join("\n")
-      );
-    }
-  }
+  await runSubmitFlowRules({ form, answers, submissionId: submission.id });
 
   res.status(201).json({ ok: true, submissionId: submission.id, invalid: invalidReasons.length > 0 });
 });
 
 const port = Number(process.env.PORT ?? "4000");
-app.listen(port, () => console.log(`API http://0.0.0.0:${port}`));
-setInterval(() => runSlaCheckOnce().catch((e) => console.error("SLA check", e)), 60_000);
-runSlaCheckOnce().catch((e) => console.error("SLA check", e));
+async function ensureDefaultAdmin() {
+  const count = await prisma.admin.count();
+  if (count > 0) return;
+  await prisma.admin.create({
+    data: {
+      email: "admin",
+      passwordHash: await hashPassword("admin123"),
+    },
+  });
+  console.log("Varsayilan admin olusturuldu: admin / admin123");
+}
+async function start() {
+  await ensureDefaultAdmin();
+  app.listen(port, () => console.log(`API http://0.0.0.0:${port}`));
+  setInterval(() => runSlaCheckOnce().catch((e) => console.error("SLA check", e)), 60_000);
+  runSlaCheckOnce().catch((e) => console.error("SLA check", e));
+}
+start().catch((e) => {
+  console.error("Startup error", e);
+  process.exit(1);
+});

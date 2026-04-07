@@ -45,14 +45,22 @@ function entityKeyFromAnswers(answers: Record<string, unknown>, qid: string): st
   return String(raw);
 }
 
-type FlowCondition = {
+type FlowMissingQuotaCondition = {
   kind: "MISSING_ENTITY_QUOTA";
   questionId: string;
   periodUnit: "DAY" | "MONTH" | "YEAR";
   periodValue: number;
   minCount: number;
   entities?: string[];
+  weekdays?: number[];
 };
+type FlowAnswerLabelMatchCondition = {
+  kind: "ANSWER_LABEL_MATCH";
+  questionIds: string[];
+  expectedLabel: string;
+  mode?: "ANY" | "ALL";
+};
+type FlowCondition = FlowMissingQuotaCondition | FlowAnswerLabelMatchCondition;
 
 type FlowAction = {
   kind: "SEND_EMAIL";
@@ -80,7 +88,7 @@ function shouldSendNow(lastFiredAt: Date | null, now: Date): boolean {
 async function runFlowRules(now: Date) {
   const rules = await prisma.formFlowRule.findMany({
     where: { enabled: true, trigger: "ON_SCHEDULE", form: { published: true } },
-    include: { form: true },
+    include: { form: { include: { questions: true } } },
   });
   for (const rule of rules) {
     let condition: FlowCondition | null = null;
@@ -94,9 +102,23 @@ async function runFlowRules(now: Date) {
     if (!condition || !action) continue;
     if (condition.kind !== "MISSING_ENTITY_QUOTA" || action.kind !== "SEND_EMAIL") continue;
     if (!condition.questionId || !Array.isArray(action.emails) || action.emails.length === 0) continue;
+    const activeWeekdays = Array.isArray(condition.weekdays)
+      ? condition.weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+      : [];
+    if (activeWeekdays.length > 0 && !activeWeekdays.includes(now.getDay())) continue;
 
     const start = periodStartByParts(condition.periodUnit, condition.periodValue, now);
     const subs = await prisma.submission.findMany({ where: { formId: rule.formId, createdAt: { gte: start } } });
+    const entityQuestion = rule.form.questions.find((q) => q.id === condition.questionId);
+    const optionLabelById = new Map<string, string>();
+    if (entityQuestion) {
+      try {
+        const opts = JSON.parse(entityQuestion.optionsJson || "[]") as Array<{ id: string; label: string }>;
+        for (const o of opts) optionLabelById.set(o.id, o.label || o.id);
+      } catch {
+        // no-op
+      }
+    }
 
     const counts = new Map<string, number>();
     for (const s of subs) {
@@ -119,7 +141,10 @@ async function runFlowRules(now: Date) {
     const deficits: string[] = [];
     for (const ent of entitySet) {
       const c = counts.get(ent) ?? 0;
-      if (c < condition.minCount) deficits.push(`  • ${ent}: ${c} / ${condition.minCount}`);
+      if (c < condition.minCount) {
+        const label = optionLabelById.get(ent) ?? ent;
+        deficits.push(`  • ${label}: ${c} / ${condition.minCount}`);
+      }
     }
     if (deficits.length === 0) continue;
     if (!shouldSendNow(rule.lastFiredAt, now)) continue;

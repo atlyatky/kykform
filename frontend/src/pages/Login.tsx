@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, setToken } from "../api";
+import { BrandLogo } from "../components/BrandLogo";
 
 export default function Login() {
   const nav = useNavigate();
@@ -25,14 +26,18 @@ export default function Login() {
   }
 
   return (
-    <div className="layout" style={{ maxWidth: 420 }}>
+    <div className="layout" style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ width: "100%", maxWidth: 440 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "1rem" }}>
+          <BrandLogo />
+        </div>
       <div className="card">
         <h1>Giriş</h1>
         <p style={{ color: "var(--muted)", marginTop: 0 }}>Yönetim paneli</p>
         <form onSubmit={onSubmit}>
           <div style={{ marginBottom: "1rem" }}>
-            <label>E-posta</label>
-            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <label>Kullanici</label>
+            <input className="input" type="text" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
           <div style={{ marginBottom: "1rem" }}>
             <label>Şifre</label>
@@ -53,9 +58,7 @@ export default function Login() {
             Giriş yap
           </button>
         </form>
-        <p style={{ marginTop: "1.25rem", fontSize: "0.9rem", color: "var(--muted)" }}>
-          İlk kurulum için <Link to="/register">kayıt</Link>
-        </p>
+      </div>
       </div>
     </div>
   );

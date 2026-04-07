@@ -204,7 +204,9 @@ h1, h2, h3 {
   overflow: hidden;
 }
 .editor-sidebar-left {
-  width: 280px;
+  width: min(400px, 32vw);
+  min-width: 320px;
+  max-width: 460px;
   background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;

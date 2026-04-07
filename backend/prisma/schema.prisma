@@ -14,6 +14,12 @@ model Admin {
   createdAt    DateTime @default(now())
 }
 
+model FirewallConfig {
+  id        String   @id
+  rulesJson String   @default("{}")
+  updatedAt DateTime @updatedAt
+}
+
 enum FormPeriodUnit {
   NONE
   DAY

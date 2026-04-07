@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Plus, Palette, Settings2, Trash2, ArrowUp, ArrowDown, Type, AlignLeft, CheckSquare, List, Hash, Calendar, FileText, Grid, Check, SplitSquareHorizontal, ChevronLeft, Save, Eye } from "lucide-react";
+import { Plus, Settings2, Trash2, ArrowUp, ArrowDown, Type, AlignLeft, CheckSquare, List, Hash, Calendar, FileText, Grid, Check, SplitSquareHorizontal, ChevronLeft, Save, Eye, SlidersHorizontal, Info } from "lucide-react";
 import { BrandLogo } from "../components/BrandLogo";
 import { api, copyTextToClipboard, publicFormUrl } from "../api";
 
@@ -8,7 +8,9 @@ type Opt = { id: string; label: string; parentOptionIds?: string[]; score?: numb
 type Row = { id: string; label: string };
 type QType = "TEXT" | "TEXTAREA" | "SINGLE_CHOICE" | "MULTI_CHOICE" | "NUMBER" | "DATE" | "FILE" | "GRID" | "PAGE_BREAK" | "AGREEMENT";
 type Q = { id?: string; type: QType; title: string; description?: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: { questionId: string; optionIds: string[] } | null; };
-type FlowCondition = { kind: "MISSING_ENTITY_QUOTA"; questionId: string; periodUnit: "DAY" | "MONTH" | "YEAR"; periodValue: number; minCount: number; entities?: string[] };
+type FlowMissingQuotaCondition = { kind: "MISSING_ENTITY_QUOTA"; questionId: string; periodUnit: "DAY" | "MONTH" | "YEAR"; periodValue: number; minCount: number; entities?: string[]; weekdays?: number[] };
+type FlowAnswerLabelMatchCondition = { kind: "ANSWER_LABEL_MATCH"; questionIds: string[]; expectedLabel: string; mode: "ANY" | "ALL" };
+type FlowCondition = FlowMissingQuotaCondition | FlowAnswerLabelMatchCondition;
 type FlowAction = { kind: "SEND_EMAIL"; emails: string[]; subject?: string };
 type FlowRule = { id?: string; name: string; enabled: boolean; trigger: "ON_SCHEDULE" | "ON_SUBMIT"; condition: FlowCondition; action: FlowAction; lastFiredAt?: string | null };
 
@@ -27,14 +29,30 @@ function createId() {
 function newOpt(): Opt { return { id: createId(), label: "" }; }
 function newRow(): Row { return { id: createId(), label: "" }; }
 function newQuestion(type: QType = "TEXT"): Q { return { type, title: type === "PAGE_BREAK" ? "Yeni Bölüm / Sayfa" : "", description: "", required: false, options: type === "SINGLE_CHOICE" || type === "MULTI_CHOICE" || type === "GRID" ? [newOpt(), newOpt()] : [], rows: type === "GRID" ? [newRow(), newRow()] : [], showWhen: null }; }
-function newFlowRule(): FlowRule {
+function newMissingQuotaRule(): FlowRule {
   return {
     name: "Eksik Forklift Kontrolü",
     enabled: true,
     trigger: "ON_SCHEDULE",
-    condition: { kind: "MISSING_ENTITY_QUOTA", questionId: "", periodUnit: "DAY", periodValue: 1, minCount: 10, entities: [] },
+    condition: { kind: "MISSING_ENTITY_QUOTA", questionId: "", periodUnit: "DAY", periodValue: 1, minCount: 1, entities: [], weekdays: [1, 2, 3, 4, 5, 6] },
     action: { kind: "SEND_EMAIL", emails: [], subject: "" },
   };
+}
+function newAnswerLabelRule(): FlowRule {
+  return {
+    name: "Kritik secim bildirimi",
+    enabled: true,
+    trigger: "ON_SUBMIT",
+    condition: { kind: "ANSWER_LABEL_MATCH", questionIds: [], expectedLabel: "", mode: "ANY" },
+    action: { kind: "SEND_EMAIL", emails: [], subject: "" },
+  };
+}
+function parseEmailList(values: string[]): string[] {
+  return values
+    .join("\n")
+    .split(/[,;\n]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
 }
 
 const ICONS: Record<QType, React.ReactNode> = {
@@ -69,7 +87,7 @@ export default function FormEditor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
-  const [activeTab, setActiveTab] = useState<"toolbox" | "settings">("toolbox");
+  const [activeTab, setActiveTab] = useState<"toolbox" | "controls" | "general">("toolbox");
 
   const [meta, setMeta] = useState<Omit<FormPayload, "questions">>({
     id: "", title: "", slug: "", published: false, revision: 1, description: "",
@@ -99,7 +117,34 @@ export default function FormEditor() {
       if (qs.length > 0) setSelectedQIndex(0);
     }).then(async () => {
       const rules = await api<FlowRule[]>(`/api/forms/${id}/flows`);
-      setFlowRules(Array.isArray(rules) ? rules : []);
+      setFlowRules(
+        Array.isArray(rules)
+          ? rules.map((r) => {
+              if (r.condition.kind === "ANSWER_LABEL_MATCH") {
+                return {
+                  ...r,
+                  trigger: "ON_SUBMIT",
+                  condition: {
+                    ...r.condition,
+                    questionIds: Array.isArray(r.condition.questionIds) ? r.condition.questionIds : [],
+                    expectedLabel: r.condition.expectedLabel ?? "",
+                    mode: r.condition.mode === "ALL" ? "ALL" : "ANY",
+                  },
+                } as FlowRule;
+              }
+              return {
+                ...r,
+                trigger: "ON_SCHEDULE",
+                condition: {
+                  ...r.condition,
+                  minCount: 1,
+                  entities: Array.isArray(r.condition.entities) ? r.condition.entities : [],
+                  weekdays: Array.isArray(r.condition.weekdays) && r.condition.weekdays.length > 0 ? r.condition.weekdays : [1, 2, 3, 4, 5, 6],
+                },
+              } as FlowRule;
+            })
+          : []
+      );
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -108,7 +153,10 @@ export default function FormEditor() {
     setSaving(true); setMsg("");
     try {
       const quotaEntities = quotaDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-      await api(`/api/forms/${id}`, { method: "PATCH", body: JSON.stringify({ ...meta, quotaEntities }) });
+      await api(`/api/forms/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ...meta, notifyEmails: parseEmailList(meta.notifyEmails), quotaEntities }),
+      });
       await api(`/api/forms/${id}/questions`, { method: "PUT", body: JSON.stringify(questions) });
       await api(`/api/forms/${id}/flows`, {
         method: "PUT",
@@ -117,13 +165,17 @@ export default function FormEditor() {
           name: r.name,
           enabled: r.enabled,
           trigger: r.trigger,
-          condition: {
-            ...r.condition,
-            entities: (r.condition.entities ?? []).map((x) => x.trim()).filter(Boolean),
-          },
+          condition: r.condition.kind === "MISSING_ENTITY_QUOTA"
+            ? {
+                ...r.condition,
+                minCount: 1,
+                entities: (r.condition.entities ?? []).map((x) => x.trim()).filter(Boolean),
+                weekdays: (r.condition.weekdays ?? [1, 2, 3, 4, 5, 6]).filter((d) => d >= 0 && d <= 6),
+              }
+            : { ...r.condition, questionIds: r.condition.questionIds.filter(Boolean), expectedLabel: r.condition.expectedLabel.trim() },
           action: {
             ...r.action,
-            emails: (r.action.emails ?? []).map((x) => x.trim()).filter(Boolean),
+            emails: parseEmailList(r.action.emails ?? []),
           },
         }))),
       });
@@ -157,6 +209,32 @@ export default function FormEditor() {
   };
 
   const selectedQ = selectedQIndex !== null ? questions[selectedQIndex] : null;
+  const eligibleEntityQuestions = questions.filter((q) => !!q.id && (q.type === "TEXT" || q.type === "SINGLE_CHOICE" || q.type === "NUMBER"));
+  const eligibleChoiceQuestions = questions.filter((q) => !!q.id && (q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE"));
+  const questionTitleById = new Map(questions.filter((q) => !!q.id).map((q) => [q.id as string, q.title || "İsimsiz soru"]));
+  const periodText = (unit: "DAY" | "MONTH" | "YEAR") => unit === "DAY" ? "günde" : unit === "MONTH" ? "ayda" : "yılda";
+  const weekdayLabels: Array<{ value: number; label: string }> = [
+    { value: 1, label: "Pzt" },
+    { value: 2, label: "Sal" },
+    { value: 3, label: "Car" },
+    { value: 4, label: "Per" },
+    { value: 5, label: "Cum" },
+    { value: 6, label: "Cmt" },
+    { value: 0, label: "Paz" },
+  ];
+  const weekdayLong = (v: number) => {
+    const map: Record<number, string> = { 0: "Pazar", 1: "Pazartesi", 2: "Sali", 3: "Carsamba", 4: "Persembe", 5: "Cuma", 6: "Cumartesi" };
+    return map[v] ?? String(v);
+  };
+  const ruleSentence = (rule: FlowRule) => {
+    if (rule.condition.kind === "MISSING_ENTITY_QUOTA") {
+      const qTitle = questionTitleById.get(rule.condition.questionId) ?? "seçili varlık";
+      const d = (rule.condition.weekdays ?? [1, 2, 3, 4, 5, 6]).map(weekdayLong).join(", ");
+      return `${rule.condition.periodValue} ${periodText(rule.condition.periodUnit)} "${qTitle}" sorusundaki secili her varlik icin 1 kayit bekle; ${d} gunlerinde eksik olanlari ${parseEmailList(rule.action.emails ?? []).length} kisiye bildir.`;
+    }
+    const names = rule.condition.questionIds.map((id) => questionTitleById.get(id) ?? "isimsiz soru").join(", ");
+    return `"${names || "soru seçin"}" sorularında "${rule.condition.expectedLabel || "değer"}" ${rule.condition.mode === "ALL" ? "hepsinde" : "en az birinde"} seçilirse ${parseEmailList(rule.action.emails ?? []).length} kişiye mail at.`;
+  };
 
   if (loading) return <div className="layout">Yükleniyor...</div>;
 
@@ -207,12 +285,15 @@ export default function FormEditor() {
       <div className="editor-main">
         {/* Left Sidebar - Toolbox */}
         <div className="editor-sidebar-left">
-          <div style={{ display: "flex", borderBottom: "1px solid var(--border)", marginBottom: "1rem" }}>
-            <button className={`btn-ghost ${activeTab === "toolbox" ? "active" : ""}`} style={{ flex: 1, padding: "1rem", borderRadius: 0, borderBottom: activeTab === "toolbox" ? "2px solid var(--primary)" : "2px solid transparent", color: activeTab === "toolbox" ? "var(--primary)" : "var(--muted)", fontWeight: 600 }} onClick={() => setActiveTab("toolbox")}>
-              Araç Kutusu
+          <div style={{ display: "flex", borderBottom: "1px solid var(--border)", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+            <button className={`btn-ghost ${activeTab === "toolbox" ? "active" : ""}`} style={{ flex: "1 1 30%", minWidth: 0, padding: "0.65rem 0.4rem", borderRadius: 0, borderBottom: activeTab === "toolbox" ? "2px solid var(--primary)" : "2px solid transparent", color: activeTab === "toolbox" ? "var(--primary)" : "var(--muted)", fontWeight: 600, fontSize: "0.78rem" }} onClick={() => setActiveTab("toolbox")} title="Soru tipleri">
+              Araç
             </button>
-            <button className={`btn-ghost ${activeTab === "settings" ? "active" : ""}`} style={{ flex: 1, padding: "1rem", borderRadius: 0, borderBottom: activeTab === "settings" ? "2px solid var(--primary)" : "2px solid transparent", color: activeTab === "settings" ? "var(--primary)" : "var(--muted)", fontWeight: 600 }} onClick={() => setActiveTab("settings")}>
-              Form Ayarları
+            <button className={`btn-ghost ${activeTab === "controls" ? "active" : ""}`} style={{ flex: "1 1 38%", minWidth: 0, padding: "0.65rem 0.4rem", borderRadius: 0, borderBottom: activeTab === "controls" ? "2px solid var(--primary)" : "2px solid transparent", color: activeTab === "controls" ? "var(--primary)" : "var(--muted)", fontWeight: 600, fontSize: "0.78rem", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }} onClick={() => setActiveTab("controls")} title="Kontroller ve bildirimler">
+              <SlidersHorizontal size={14} /> Kontroller
+            </button>
+            <button className={`btn-ghost ${activeTab === "general" ? "active" : ""}`} style={{ flex: "1 1 30%", minWidth: 0, padding: "0.65rem 0.4rem", borderRadius: 0, borderBottom: activeTab === "general" ? "2px solid var(--primary)" : "2px solid transparent", color: activeTab === "general" ? "var(--primary)" : "var(--muted)", fontWeight: 600, fontSize: "0.78rem", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }} onClick={() => setActiveTab("general")} title="Başlık ve link">
+              <Info size={14} /> Form
             </button>
           </div>
 
@@ -227,12 +308,15 @@ export default function FormEditor() {
             </div>
           )}
 
-          {activeTab === "settings" && (
+          {activeTab === "general" && (
             <div className="editor-sidebar-section">
-              <div className="editor-sidebar-title">Genel Ayarlar</div>
-              
+              <div className="editor-sidebar-title">Form bilgisi</div>
+              <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "-0.5rem 0 1rem 0", lineHeight: 1.45 }}>
+                Başlık, açıklama ve paylaşım linki. Zorunlu soru ve kota ayarları <strong style={{ color: "var(--text)" }}>Kontroller</strong> sekmesindedir.
+              </p>
+
               <div style={{ marginBottom: "1.5rem", padding: "1rem", background: "var(--surface2)", borderRadius: "8px", border: "1px solid var(--border)" }}>
-                <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 600, color: "var(--primary)", fontSize: "0.9rem" }}>Form Paylaşım Linki</label>
+                <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 600, color: "var(--primary)", fontSize: "0.9rem" }}>Form paylaşım linki</label>
                 <div style={{ display: "flex", gap: "0.5rem" }}>
                   <input className="input" readOnly value={publicFormUrl(meta.slug)} style={{ flex: 1, fontSize: "0.85rem", background: "var(--surface)", padding: "0.4rem 0.6rem" }} />
                   <button className="btn btn-primary" onClick={() => void copyTextToClipboard(publicFormUrl(meta.slug)).then((ok) => alert(ok ? "Link kopyalandı." : "Kopyalanamadı."))} style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>Kopyala</button>
@@ -240,141 +324,169 @@ export default function FormEditor() {
               </div>
 
               <div style={{ marginBottom: "1rem" }}>
-                <label>Form Başlığı</label>
+                <label>Form başlığı</label>
                 <input className="input" value={meta.title} onChange={e => setMeta(m => ({ ...m, title: e.target.value }))} />
               </div>
               <div style={{ marginBottom: "1rem" }}>
-                <label>Form Açıklaması</label>
+                <label>Form açıklaması</label>
                 <textarea className="input" rows={3} value={meta.description || ""} onChange={e => setMeta(m => ({ ...m, description: e.target.value }))} />
               </div>
-              <div style={{ marginBottom: "1rem" }}>
-                <label>Doldurma Periyodu</label>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <input type="number" className="input" style={{ width: "80px" }} min={1} value={meta.periodValue} onChange={e => setMeta(m => ({ ...m, periodValue: parseInt(e.target.value) || 1 }))} disabled={meta.periodUnit === "NONE"} />
-                  <select className="input" value={meta.periodUnit} onChange={e => setMeta(m => ({ ...m, periodUnit: e.target.value as any }))}>
-                    <option value="NONE">Sürekli (Limitsiz)</option>
-                    <option value="DAY">Gün</option>
-                    <option value="MONTH">Ay</option>
-                    <option value="YEAR">Yıl</option>
-                  </select>
-                </div>
-              </div>
-              {meta.periodUnit !== "NONE" && (
-                <>
-                  <div style={{ marginBottom: "1rem" }}>
-                    <label>Beklenen yanıt (periyot ve varlık başına)</label>
-                    <input type="number" className="input" min={1} value={meta.expectedSubmissions} onChange={e => setMeta(m => ({ ...m, expectedSubmissions: parseInt(e.target.value) || 1 }))} />
-                    <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.35rem" }}>
-                      Örn. günde 10 kez: periyot = 1 gün, buraya 10. Aşağıda varlık sorusu seçerseniz her forklift (veya numara) için ayrı sayılır.
-                    </div>
-                  </div>
-                  <div style={{ marginBottom: "1rem" }}>
-                    <label>Varlık sorusu (örn. forklift numarası)</label>
-                    <select
-                      className="input"
-                      value={meta.quotaQuestionId ?? ""}
-                      onChange={(e) => setMeta((m) => ({ ...m, quotaQuestionId: e.target.value || null }))}
-                    >
-                      <option value="">— Yok (toplam forma göre kota) —</option>
-                      {questions
-                        .filter((q) => !!q.id && (q.type === "TEXT" || q.type === "SINGLE_CHOICE" || q.type === "NUMBER"))
-                        .map((q) => (
-                          <option key={q.id} value={q.id}>
-                            {(q.title || "İsimsiz").slice(0, 60)}
-                          </option>
-                        ))}
-                    </select>
-                    <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.35rem" }}>
-                      Önce kaydedin; soru ID’si oluşunca listede görünür. Kota, bu sorunun cevabına göre gruplanır.
-                    </div>
-                  </div>
-                  <div style={{ marginBottom: "1rem" }}>
-                    <label>Beklenen varlık listesi (isteğe bağlı, satır satır)</label>
-                    <textarea
-                      className="input"
-                      rows={4}
-                      placeholder={"FL-01\nFL-02\nFL-03"}
-                      value={quotaDraft}
-                      onChange={(e) => setQuotaDraft(e.target.value)}
-                    />
-                    <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.35rem" }}>
-                      Doluysa yalnız bu numaralar kontrol edilir; boşsa gönderilen cevaplardaki her varlık için kota uygulanır.
-                    </div>
-                  </div>
-                </>
-              )}
-              <div style={{ marginBottom: "1rem" }}>
-                <label>Bildirim e-postaları (virgülle)</label>
+            </div>
+          )}
+
+          {activeTab === "controls" && (
+            <div className="editor-sidebar-section">
+              <div className="editor-sidebar-title">Kurallar &amp; bildirim</div>
+              <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "-0.5rem 0 1rem 0", lineHeight: 1.45 }}>
+                Basit kural cümlesiyle ilerleyin. İki tip var: <strong style={{ color: "var(--text)" }}>doldurulmadı bildirimi</strong> ve <strong style={{ color: "var(--text)" }}>şık seçimi bildirimi</strong>.
+              </p>
+
+              <div style={{ marginBottom: "1rem", padding: "1rem", background: "var(--surface2)", borderRadius: "8px", border: "1px solid var(--border)" }}>
+                <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--primary)", marginBottom: "0.5rem" }}>Genel bildirim adresleri</div>
+                <label>Mail adresleri (virgülle)</label>
                 <input
                   className="input"
-                  placeholder="kisi@firma.com, diger@firma.com"
-                  value={meta.notifyEmails.join(", ")}
-                  onChange={(e) =>
-                    setMeta((m) => ({
-                      ...m,
-                      notifyEmails: e.target.value
-                        .split(/[,;\n]+/)
-                        .map((s) => s.trim())
-                        .filter(Boolean),
-                    }))
-                  }
+                  placeholder="x@firma.com, y@firma.com"
+                  value={meta.notifyEmails.length <= 1 ? (meta.notifyEmails[0] ?? "") : meta.notifyEmails.join(", ")}
+                  onChange={(e) => setMeta((m) => ({ ...m, notifyEmails: [e.target.value] }))}
                 />
+                <div style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: "var(--muted)" }}>
+                  Not: Zorunlu sorular boş bırakılırsa form gönderimi sistem tarafından otomatik engellenir.
+                </div>
               </div>
 
-              <div style={{ marginTop: "1.5rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-                  <label style={{ fontWeight: 700, color: "var(--primary)" }}>Akış Kuralları</label>
-                  <button className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newFlowRule()])}>
-                    <Plus size={14} /> Akış Ekle
-                  </button>
-                </div>
-                {flowRules.length === 0 && (
-                  <div style={{ fontSize: "0.85rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
-                    Henüz akış yok. Örn: "Forklift no sorusuna göre günde 10’dan azsa mail at".
+              <div style={{ padding: "1rem", background: "var(--surface2)", borderRadius: "8px", border: "1px solid var(--border)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
+                  <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--primary)" }}>Akış kuralları</div>
+                  <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                    <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newMissingQuotaRule()])}><Plus size={14} /> Doldurulmadı</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newAnswerLabelRule()])}><Plus size={14} /> Şık Seçildi</button>
                   </div>
-                )}
+                </div>
+
+                {flowRules.length === 0 && <div style={{ fontSize: "0.85rem", color: "var(--muted)", marginBottom: "0.5rem" }}>Kural yok. Örn: "Günde 1 kez FL-01 için form doldurulmadıysa a@,b@ kişilerine bildir".</div>}
+
                 {flowRules.map((rule, i) => (
-                  <div key={rule.id || `flow-${i}`} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem", marginBottom: "0.75rem", background: "var(--surface-soft)" }}>
+                  <div key={rule.id || `flow-${i}`} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem", marginBottom: "0.75rem", background: "var(--surface)" }}>
                     <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
                       <input className="input" value={rule.name} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))} placeholder="Kural adı" />
-                      <button className="btn-icon" title="Sil" onClick={() => setFlowRules((arr) => arr.filter((_, idx) => idx !== i))}><Trash2 size={16} /></button>
+                      <button type="button" className="btn-icon" title="Sil" onClick={() => setFlowRules((arr) => arr.filter((_, idx) => idx !== i))}><Trash2 size={16} /></button>
                     </div>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem", marginBottom: "0.5rem" }}>
                       <input type="checkbox" checked={rule.enabled} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, enabled: e.target.checked } : x))} />
                       Kural aktif
                     </label>
-                    <div style={{ display: "grid", gap: "0.5rem" }}>
-                      <label style={{ fontSize: "0.85rem" }}>Varlık sorusu</label>
-                      <select className="input" value={rule.condition.questionId} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, questionId: e.target.value } } : x))}>
-                        <option value="">Soruyu seçin</option>
-                        {questions.filter((q) => !!q.id && (q.type === "TEXT" || q.type === "NUMBER" || q.type === "SINGLE_CHOICE")).map((q) => (
-                          <option key={q.id} value={q.id}>{q.title || "İsimsiz soru"}</option>
-                        ))}
-                      </select>
-                      <div style={{ display: "flex", gap: "0.5rem" }}>
-                        <input type="number" className="input" min={1} value={rule.condition.periodValue} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, periodValue: parseInt(e.target.value) || 1 } } : x))} />
-                        <select className="input" value={rule.condition.periodUnit} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, periodUnit: e.target.value as FlowCondition["periodUnit"] } } : x))}>
-                          <option value="DAY">Gün</option>
-                          <option value="MONTH">Ay</option>
-                          <option value="YEAR">Yıl</option>
+
+                    {rule.condition.kind === "MISSING_ENTITY_QUOTA" ? (
+                      <div style={{ display: "grid", gap: "0.5rem" }}>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Günde/Ayda/Yılda X kez, belirli varlık için form doldurulmadıysa bildir.</div>
+                        <select className="input" value={rule.condition.questionId} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, questionId: e.target.value, entities: [], minCount: 1 } } : x))}>
+                          <option value="">Varlık sorusu seçin (örn. forklift no)</option>
+                          {eligibleEntityQuestions.map((q) => <option key={q.id} value={q.id}>{q.title || "İsimsiz soru"}</option>)}
                         </select>
-                        <input type="number" className="input" min={1} value={rule.condition.minCount} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, minCount: parseInt(e.target.value) || 1 } } : x))} placeholder="Min yanıt" />
+                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                          <input type="number" className="input" min={1} style={{ width: "72px" }} value={rule.condition.periodValue} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, periodValue: parseInt(e.target.value) || 1 } } : x))} />
+                          <select className="input" style={{ minWidth: "100px" }} value={rule.condition.periodUnit} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, periodUnit: e.target.value as FlowMissingQuotaCondition["periodUnit"] } } : x))}>
+                            <option value="DAY">Gün</option>
+                            <option value="MONTH">Ay</option>
+                            <option value="YEAR">Yıl</option>
+                          </select>
+                          <div style={{ flex: 1, minWidth: "120px", fontSize: "0.82rem", color: "var(--muted)", display: "flex", alignItems: "center" }}>
+                            Her secili varlik icin hedef: <strong style={{ marginLeft: 4, color: "var(--text)" }}>1 kayit</strong>
+                          </div>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: "0.85rem" }}>Kontrol günleri (Pazar kapatılabilir)</label>
+                          <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginTop: "0.35rem" }}>
+                            {weekdayLabels.map((w) => (
+                              <label key={w.value} style={{ display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.8rem", background: "var(--surface-soft)", border: "1px solid var(--border)", borderRadius: 6, padding: "0.2rem 0.4rem", cursor: "pointer" }}>
+                                <input
+                                  type="checkbox"
+                                  checked={(rule.condition.weekdays ?? [1, 2, 3, 4, 5, 6]).includes(w.value)}
+                                  onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => {
+                                    if (idx !== i || x.condition.kind !== "MISSING_ENTITY_QUOTA") return x;
+                                    const curr = new Set(x.condition.weekdays ?? [1, 2, 3, 4, 5, 6]);
+                                    if (e.target.checked) curr.add(w.value); else curr.delete(w.value);
+                                    return { ...x, condition: { ...x.condition, weekdays: [...curr] } };
+                                  }))}
+                                />
+                                {w.label}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        {(() => {
+                          const entityQ = questions.find((q) => q.id === rule.condition.questionId);
+                          const optionList = entityQ?.type === "SINGLE_CHOICE" ? (entityQ.options ?? []) : [];
+                          if (optionList.length > 0) {
+                            return (
+                              <div>
+                                <label style={{ fontSize: "0.85rem" }}>Varlık listesi (coklu secim)</label>
+                                <div style={{ maxHeight: 120, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem", marginTop: "0.3rem" }}>
+                                  {optionList.map((opt) => (
+                                    <label key={opt.id} style={{ display: "flex", gap: "0.4rem", fontSize: "0.82rem", marginBottom: "0.25rem" }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={(rule.condition.entities ?? []).includes(opt.id)}
+                                        onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => {
+                                          if (idx !== i || x.condition.kind !== "MISSING_ENTITY_QUOTA") return x;
+                                          const curr = new Set(x.condition.entities ?? []);
+                                          if (e.target.checked) curr.add(opt.id); else curr.delete(opt.id);
+                                          return { ...x, condition: { ...x.condition, entities: [...curr], minCount: 1 } };
+                                        }))}
+                                      />
+                                      {opt.label || "İsimsiz varlık"}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <textarea
+                              className="input"
+                              rows={2}
+                              value={(rule.condition.entities ?? []).join("\n")}
+                              onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, entities: e.target.value.split(/\r?\n/).map((v) => v.trim()).filter(Boolean), minCount: 1 } } : x))}
+                              placeholder={"FL-01\nFL-02 (opsiyonel)"}
+                            />
+                          );
+                        })()}
+                        <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Mail alıcıları" />
                       </div>
-                      <label style={{ fontSize: "0.85rem" }}>Varlık listesi (opsiyonel, satır satır)</label>
-                      <textarea
-                        className="input"
-                        rows={3}
-                        value={(rule.condition.entities ?? []).join("\n")}
-                        onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, condition: { ...x.condition, entities: e.target.value.split(/\r?\n/).map((v) => v.trim()).filter(Boolean) } } : x))}
-                        placeholder="FL-01&#10;FL-02"
-                      />
-                      <label style={{ fontSize: "0.85rem" }}>Mail alıcıları (virgül)</label>
-                      <input
-                        className="input"
-                        value={(rule.action.emails ?? []).join(", ")}
-                        onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: e.target.value.split(/[,;\n]+/).map((v) => v.trim()).filter(Boolean) } } : x))}
-                        placeholder="saha@firma.com, bakim@firma.com"
-                      />
+                    ) : (
+                      <div style={{ display: "grid", gap: "0.5rem" }}>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Seçili sorularda belirli şık işaretlenirse gönderim anında mail atar.</div>
+                        <label style={{ fontSize: "0.85rem" }}>Sorular</label>
+                        <div style={{ maxHeight: 120, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem" }}>
+                          {eligibleChoiceQuestions.length === 0 && <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Önce tekli/çoklu seçim sorusu ekleyin.</div>}
+                          {eligibleChoiceQuestions.map((q) => (
+                            <label key={q.id} style={{ display: "flex", gap: "0.4rem", fontSize: "0.82rem", marginBottom: "0.3rem" }}>
+                              <input
+                                type="checkbox"
+                                checked={rule.condition.questionIds.includes(q.id as string)}
+                                onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => {
+                                  if (idx !== i || x.condition.kind !== "ANSWER_LABEL_MATCH") return x;
+                                  const curr = new Set(x.condition.questionIds);
+                                  if (e.target.checked) curr.add(q.id as string); else curr.delete(q.id as string);
+                                  return { ...x, condition: { ...x.condition, questionIds: [...curr] } };
+                                }))}
+                              />
+                              {q.title || "İsimsiz soru"}
+                            </label>
+                          ))}
+                        </div>
+                        <input className="input" value={rule.condition.expectedLabel} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i && x.condition.kind === "ANSWER_LABEL_MATCH" ? { ...x, condition: { ...x.condition, expectedLabel: e.target.value } } : x))} placeholder="Aranacak şık metni (örn: Ciddi risk)" />
+                        <select className="input" value={rule.condition.mode} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i && x.condition.kind === "ANSWER_LABEL_MATCH" ? { ...x, condition: { ...x.condition, mode: e.target.value as "ANY" | "ALL" } } : x))}>
+                          <option value="ANY">En az bir soruda seçilirse</option>
+                          <option value="ALL">Tüm seçili sorularda seçilirse</option>
+                        </select>
+                        <input className="input" value={(rule.action.emails ?? []).length <= 1 ? ((rule.action.emails ?? [])[0] ?? "") : (rule.action.emails ?? []).join(", ")} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, emails: [e.target.value] } } : x))} placeholder="Mail alıcıları" />
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: "var(--primary)", background: "var(--surface-soft)", borderRadius: 6, padding: "0.5rem" }}>
+                      {ruleSentence(rule)}
                     </div>
                   </div>
                 ))}

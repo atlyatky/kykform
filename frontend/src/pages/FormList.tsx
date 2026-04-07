@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Eye, Pencil, QrCode, Rocket, Trash2, BarChart3, Plus } from "lucide-react";
 import { api, apiBaseUrl } from "../api";
 import { BrandLogo } from "../components/BrandLogo";
+import { AdminHeaderActions } from "../components/AdminHeaderActions";
 
 type Row = {
   id: string;
@@ -66,7 +67,10 @@ export default function FormList() {
     <div className="layout">
       <header className="topbar">
         <BrandLogo />
-        <div className="badge">Form Merkezi</div>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <div className="badge">Form Merkezi</div>
+          <AdminHeaderActions />
+        </div>
       </header>
 
       <form onSubmit={createForm} className="card" style={{ marginBottom: "1rem", display: "flex", gap: "0.6rem" }}>
