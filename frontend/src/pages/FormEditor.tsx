@@ -230,14 +230,6 @@ export default function FormEditor() {
     const map: Record<number, string> = { 0: "Pazar", 1: "Pazartesi", 2: "Sali", 3: "Carsamba", 4: "Persembe", 5: "Cuma", 6: "Cumartesi" };
     return map[v] ?? String(v);
   };
-  const appendTemplateTag = (ruleIndex: number, tag: string) => {
-    setFlowRules((arr) => arr.map((x, idx) => {
-      if (idx !== ruleIndex) return x;
-      const curr = x.action.messageTemplate ?? "";
-      const sep = curr && !curr.endsWith(" ") && !curr.endsWith("\n") ? " " : "";
-      return { ...x, action: { ...x.action, messageTemplate: `${curr}${sep}${tag}` } };
-    }));
-  };
   const sendTest = async (urls: string[], subject?: string, message?: string) => {
     const parsed = parseWebhookList(urls);
     if (parsed.length === 0) return alert("Önce en az 1 webhook URL girin.");
@@ -259,6 +251,40 @@ export default function FormEditor() {
     }
     const names = rule.condition.questionIds.map((id) => questionTitleById.get(id) ?? "isimsiz soru").join(", ");
     return `"${names || "soru seçin"}" sorularında "${rule.condition.expectedLabel || "değer"}" ${rule.condition.mode === "ALL" ? "hepsinde" : "en az birinde"} seçilirse ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildirim at.`;
+  };
+  const buildRuleTestPayload = (rule: FlowRule): { subject: string; message: string } => {
+    if (rule.condition.kind === "ANSWER_LABEL_MATCH") {
+      return {
+        subject: "Uygunsuzluk Girişi Yapılmıştır",
+        message: [
+          "Form: TEST FORM",
+          `Kural: ${rule.name || "Uygunsuz Şık"}`,
+          "Gonderim ID: TEST-001",
+          `Tetikleyen kosul: "${rule.condition.expectedLabel || "Uygunsuz"}" secildi.`,
+          "",
+          "Form raporu:",
+          "- 🔴 UYGUNSUZ Kontrol Maddesi 1: Uygunsuz",
+          "- 🟢 Kontrol Maddesi 2: Uygun",
+          "- 🟢 Aciklama: Test aciklama metni",
+        ].join("\n"),
+      };
+    }
+    return {
+      subject: `[KYK Form Rapor] Doldurulmadi Kontrolu: TEST FORM`,
+      message: [
+        "Form: TEST FORM",
+        `Kural: ${rule.name || "Doldurulmadi"}`,
+        `Rapor saati: ${rule.condition.reportTime ?? "09:00"}`,
+        "Dönem başlangıcı: 2026-01-01T00:00:00.000Z",
+        "",
+        "| Durum | Varlik | Gerceklesen |",
+        "|---|---|---|",
+        "| Dolduruldu ✅ | FL-01 | 1 / 1 |",
+        "| Doldurulmadi ❌ | FL-02 | 0 / 1 |",
+        "",
+        "Eksik varlik sayisi: 1",
+      ].join("\n"),
+    };
   };
 
   if (loading) return <div className="layout">Yükleniyor...</div>;
@@ -479,7 +505,10 @@ export default function FormEditor() {
                         <button
                           type="button"
                           className="btn btn-ghost"
-                          onClick={() => void sendTest(rule.action.emails ?? [], `[Test] ${rule.name || "Kural"}`, (rule.action.messageTemplate || "").trim() || "Kural test bildirimi")}
+                          onClick={() => {
+                            const p = buildRuleTestPayload(rule);
+                            void sendTest(rule.action.emails ?? [], p.subject, p.message);
+                          }}
                         >
                           Test Gönder
                         </button>
@@ -515,30 +544,15 @@ export default function FormEditor() {
                         <button
                           type="button"
                           className="btn btn-ghost"
-                          onClick={() => void sendTest(rule.action.emails ?? [], `[Test] ${rule.name || "Kural"}`, (rule.action.messageTemplate || "").trim() || "Kural test bildirimi")}
+                          onClick={() => {
+                            const p = buildRuleTestPayload(rule);
+                            void sendTest(rule.action.emails ?? [], p.subject, p.message);
+                          }}
                         >
                           Test Gönder
                         </button>
                       </div>
                     )}
-
-                    <div style={{ marginTop: "0.6rem", display: "grid", gap: "0.45rem" }}>
-                      <label style={{ fontSize: "0.85rem" }}>Bildirim metni (opsiyonel)</label>
-                      <textarea
-                        className="input"
-                        rows={3}
-                        value={rule.action.messageTemplate ?? ""}
-                        onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i ? { ...x, action: { ...x.action, messageTemplate: e.target.value } } : x))}
-                        placeholder="Örn: {formTitle} formunda {ruleName} kuralı tetiklendi. {deficits}"
-                      />
-                      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                        {["{formTitle}", "{ruleName}", "{expectedLabel}", "{submissionId}", "{deficits}", "{periodStart}", "{reportTime}"].map((tag) => (
-                          <button key={tag} type="button" className="btn btn-ghost" style={{ padding: "0.2rem 0.45rem", fontSize: "0.75rem" }} onClick={() => appendTemplateTag(i, tag)}>
-                            {tag}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
 
                     <div style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: "var(--primary)", background: "var(--surface-soft)", borderRadius: 6, padding: "0.5rem" }}>
                       {ruleSentence(rule)}
