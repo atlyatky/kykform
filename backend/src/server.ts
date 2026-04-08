@@ -232,6 +232,26 @@ function formatAnswerForReport(
   const options = JSON.parse(q.optionsJson || "[]") as Array<{ id: string; label: string }>;
   const optionLabel = new Map(options.map((o) => [o.id, o.label || o.id]));
   if (rawAnswer === undefined || rawAnswer === null || rawAnswer === "") return "(bos)";
+  if (q.type === "FILE") {
+    if (typeof rawAnswer === "string") {
+      // File sorularinda base64/data-url gelebilir; Teams mesajini sisirmemek icin kisalt.
+      if (rawAnswer.startsWith("data:")) {
+        const mime = rawAnswer.slice(5, rawAnswer.indexOf(";")).trim() || "dosya";
+        return `📎 Dosya eklendi (${mime})`;
+      }
+      if (/^https?:\/\//i.test(rawAnswer)) return `📎 Dosya baglantisi: ${rawAnswer}`;
+      return "📎 Dosya eklendi";
+    }
+    if (typeof rawAnswer === "object") {
+      const fileObj = rawAnswer as Record<string, unknown>;
+      const name = typeof fileObj.name === "string" ? fileObj.name : "";
+      const url = typeof fileObj.url === "string" ? fileObj.url : "";
+      if (name && url) return `📎 ${name}: ${url}`;
+      if (name) return `📎 ${name}`;
+      if (url) return `📎 Dosya baglantisi: ${url}`;
+      return "📎 Dosya eklendi";
+    }
+  }
   if (typeof rawAnswer === "string") return optionLabel.get(rawAnswer) ?? rawAnswer;
   if (typeof rawAnswer === "number" || typeof rawAnswer === "boolean") return String(rawAnswer);
   if (Array.isArray(rawAnswer)) {
@@ -246,7 +266,8 @@ function formatAnswerForReport(
       .join(" | ");
   }
   try {
-    return JSON.stringify(rawAnswer);
+    const s = JSON.stringify(rawAnswer);
+    return s.length > 240 ? `${s.slice(0, 240)}...` : s;
   } catch {
     return String(rawAnswer);
   }
@@ -292,12 +313,14 @@ async function runSubmitFlowRules(params: {
     const reportRows = params.form.questions
       .filter((q) => q.type !== "PAGE_BREAK")
       .map((q) => {
-        const answer = formatAnswerForReport(q, params.answers[q.id]);
+        const answer = formatAnswerForReport(q, params.answers[q.id]).replace(/\n+/g, " ").slice(0, 220);
         const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
         const isNonConforming = condition.questionIds.includes(q.id) && selected.includes(expected);
         const durum = answer === "(bos)" ? "⚪ Bos" : isNonConforming ? "🔴 Uygunsuz" : "🟢 Uygun";
         return `| ${q.title || q.id} | ${answer || "(bos)"} | ${durum} |`;
       });
+    const shownRows = reportRows.slice(0, 20);
+    const hiddenCount = reportRows.length - shownRows.length;
     const now = new Date();
     const defaultBody =
       `| Alan | Deger |\n` +
@@ -308,7 +331,8 @@ async function runSubmitFlowRules(params: {
       `### Formun Dolu Gorunumu\n\n` +
       `| Soru | Yanit | Durum |\n` +
       `|---|---|---|\n` +
-      `${reportRows.length ? reportRows.join("\n") : "| (Formda soru yok) | - | - |"}`;
+      `${shownRows.length ? shownRows.join("\n") : "| (Formda soru yok) | - | - |"}\n` +
+      `${hiddenCount > 0 ? `\n_(+${hiddenCount} satir daha var)_` : ""}`;
     try {
       await notify(action.emails, subject, defaultBody);
     } catch (err) {
