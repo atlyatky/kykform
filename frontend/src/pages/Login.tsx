@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiBaseUrl, setToken } from "../api";
 import { BrandLogo } from "../components/BrandLogo";
@@ -10,6 +10,30 @@ export default function Login() {
   const [otp, setOtp] = useState("");
   const [needOtp, setNeedOtp] = useState(false);
   const [err, setErr] = useState("");
+  const [accessChecked, setAccessChecked] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAccess() {
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/public/login-access`);
+        if (!cancelled) {
+          setBlocked(!res.ok);
+          setAccessChecked(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setBlocked(true);
+          setAccessChecked(true);
+        }
+      }
+    }
+    void checkAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -43,6 +67,13 @@ export default function Login() {
       <div className="card">
         <h1>Giriş</h1>
         <p style={{ color: "var(--muted)", marginTop: 0 }}>Yönetim paneli</p>
+        {!accessChecked && <p style={{ color: "var(--muted)" }}>Erişim kontrol ediliyor...</p>}
+        {accessChecked && blocked && (
+          <p style={{ color: "var(--danger)" }} role="alert">
+            Bu IP için yönetim girişi kapalı.
+          </p>
+        )}
+        {accessChecked && !blocked && (
         <form onSubmit={onSubmit}>
           <div style={{ marginBottom: "1rem" }}>
             <label>Kullanici</label>
@@ -84,6 +115,7 @@ export default function Login() {
             Giriş yap
           </button>
         </form>
+        )}
       </div>
       </div>
     </div>

@@ -256,21 +256,26 @@ async function runSubmitFlowRules(params: {
     if (!matched) continue;
 
     const subject = action.subject?.trim() || "Uygunsuzluk Girişi Yapılmıştır";
-    const reportLines = params.form.questions
+    const reportRows = params.form.questions
       .filter((q) => q.type !== "PAGE_BREAK")
       .map((q) => {
         const answer = formatAnswerForReport(q, params.answers[q.id]);
         const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
         const isNonConforming = condition.questionIds.includes(q.id) && selected.includes(expected);
-        const mark = answer === "(bos)" ? "⚪" : isNonConforming ? "🔴" : "🟢";
-        return `${q.title || q.id}\n${mark} ${answer || "(bos)"}`;
+        const durum = answer === "(bos)" ? "⚪ Bos" : isNonConforming ? "🔴 Uygunsuz" : "🟢 Uygun";
+        return `| ${q.title || q.id} | ${answer || "(bos)"} | ${durum} |`;
       });
+    const now = new Date();
     const defaultBody =
-      `Tarih: ${new Date().toLocaleDateString("tr-TR")}\n` +
-      `Saat: ${new Date().toLocaleTimeString("tr-TR")}\n` +
-      `Form Adı: ${params.form.title}\n\n` +
-      `Formun Dolu Görünümü:\n\n` +
-      `${reportLines.join("\n\n")}`;
+      `| Alan | Deger |\n` +
+      `|---|---|\n` +
+      `| Tarih | ${now.toLocaleDateString("tr-TR")} |\n` +
+      `| Saat | ${now.toLocaleTimeString("tr-TR")} |\n` +
+      `| Form Adi | ${params.form.title} |\n\n` +
+      `### Formun Dolu Gorunumu\n\n` +
+      `| Soru | Yanit | Durum |\n` +
+      `|---|---|---|\n` +
+      `${reportRows.length ? reportRows.join("\n") : "| (Formda soru yok) | - | - |"}`;
     await notify(action.emails, subject, defaultBody);
   }
 }
@@ -288,7 +293,15 @@ app.post("/api/auth/register", async (req, res) => {
   return res.status(404).json({ error: "Kayıt sayfasi kapatildi." });
 });
 
+app.get("/api/public/login-access", async (req, res) => {
+  const allowed = await canAccessPage(req, "HOME");
+  if (!allowed) return res.status(403).json({ allowed: false, error: `Bu sayfaya IP izni yok (${readClientIp(req)})` });
+  return res.json({ allowed: true });
+});
+
 app.post("/api/auth/login", async (req, res) => {
+  const allowed = await canAccessPage(req, "HOME");
+  if (!allowed) return res.status(403).json({ error: `Bu sayfaya IP izni yok (${readClientIp(req)})` });
   const body = z.object({ email: z.string().min(1), password: z.string(), otp: z.string().optional() }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
   const admin = await prisma.admin.findUnique({ where: { email: body.data.email.toLowerCase() } });
@@ -735,7 +748,40 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
     if (nums.length) numericSamples[q.id] = nums;
   }
 
-  res.json({ formId: form.id, title: form.title, totalSubmissions: form.submissions.length, timeline, choiceAggregates, numericSamples, questions: questions.map((q) => ({ id: q.id, title: q.title, description: q.description, type: q.type })) });
+  const rawLimit = Number(req.query.limit ?? "200");
+  const limit = Number.isFinite(rawLimit) ? Math.min(1000, Math.max(50, Math.trunc(rawLimit))) : 200;
+  const recentSubmissions = form.submissions.slice(-limit).reverse();
+
+  const submissionRows = recentSubmissions.map((s) => {
+    const answers = JSON.parse(s.answersJson) as Record<string, unknown>;
+    const answerList = questions
+      .filter((q) => q.type !== "PAGE_BREAK")
+      .map((q) => ({
+        questionId: q.id,
+        questionTitle: q.title,
+        answer: formatAnswerForReport(
+          { id: q.id, title: q.title, type: q.type, optionsJson: JSON.stringify(q.options), rowsJson: JSON.stringify(q.rows) },
+          answers[q.id]
+        ),
+      }));
+    return {
+      submissionId: s.id,
+      createdAt: s.createdAt.toISOString(),
+      answerList,
+    };
+  });
+
+  res.json({
+    formId: form.id,
+    title: form.title,
+    totalSubmissions: form.submissions.length,
+    timeline,
+    choiceAggregates,
+    numericSamples,
+    questions: questions.map((q) => ({ id: q.id, title: q.title, description: q.description, type: q.type })),
+    submissions: submissionRows,
+    submissionsLimit: limit,
+  });
 });
 
 app.get("/api/public/forms/:slug", async (req, res) => {
