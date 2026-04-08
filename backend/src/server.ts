@@ -821,6 +821,8 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
       .map((q) => ({
         questionId: q.id,
         questionTitle: q.title,
+        questionType: q.type,
+        rawAnswer: answers[q.id],
         answer: formatAnswerForReport(
           { id: q.id, title: q.title, type: q.type, optionsJson: JSON.stringify(q.options), rowsJson: JSON.stringify(q.rows) },
           answers[q.id]
