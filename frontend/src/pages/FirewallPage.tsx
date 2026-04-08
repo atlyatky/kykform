@@ -123,6 +123,29 @@ export default function FirewallPage() {
               </tr>
             </thead>
             <tbody>
+              <tr style={{ borderTop: "1px solid var(--border)", background: "rgba(255,255,255,0.02)" }}>
+                <td style={{ padding: "0.6rem", fontWeight: 700 }}>Sayfa izni aktif mi?</td>
+                {(Object.keys(rules) as Array<keyof FirewallRules>).map((key) => (
+                  <td key={`enabled-${key}`} style={{ textAlign: "center" }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(rules[key].enabled)}
+                        onChange={(e) =>
+                          setRules((s) => ({
+                            ...s,
+                            [key]: { ...s[key], enabled: e.target.checked },
+                          }))
+                        }
+                      />
+                      <span style={{ fontSize: "0.82rem", color: "var(--muted)" }}>
+                        {rules[key].enabled ? "Acik" : "Kapali"}
+                      </span>
+                    </label>
+                  </td>
+                ))}
+                <td />
+              </tr>
               {ips.map((ip) => (
                 <tr key={ip} style={{ borderTop: "1px solid var(--border)" }}>
                   <td style={{ padding: "0.6rem", fontFamily: "monospace" }}>{ip}</td>

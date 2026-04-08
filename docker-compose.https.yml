@@ -1,0 +1,20 @@
+# HTTPS (443): base compose ile birlikte kullanın.
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#
+# Önce deploy/ssl/ içine sertifika koyun:
+#   fullchain.pem   (veya sunucu sertifikası + zincir)
+#   privkey.pem     (özel anahtar)
+#
+# Sonra .env içinde PUBLIC_FORM_BASE_URL ve (isteğe bağlı) VITE_PUBLIC_FORM_BASE_URL
+# adresini https://... yapın; frontend yeniden build gerekir.
+
+services:
+  web:
+    build:
+      args:
+        NGINX_CONFIG: nginx-https.conf
+    # Base dosyadaki 80:80 ile birleşir; burada yalnızca HTTPS portu eklenir.
+    ports:
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ${SSL_CERT_DIR:-./deploy/ssl}:/etc/nginx/ssl:ro
