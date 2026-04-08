@@ -12,7 +12,17 @@ import { runSlaCheckOnce } from "./sla.js";
 const app = express();
 app.set("trust proxy", true);
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "2mb" }));
+const requestBodyLimit = process.env.REQUEST_BODY_LIMIT ?? "20mb";
+app.use(express.json({ limit: requestBodyLimit }));
+app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const bodyErr = err as { type?: string; limit?: number };
+  if (bodyErr?.type === "entity.too.large") {
+    const maxMb = bodyErr.limit ? Math.round((bodyErr.limit / (1024 * 1024)) * 10) / 10 : null;
+    const hint = maxMb ? ` (maks ${maxMb} MB)` : "";
+    return res.status(413).json({ error: `Yuklenen veri cok buyuk${hint}.` });
+  }
+  return next(err);
+});
 const IMMUTABLE_ALLOW_IPS = ["93.89.64.133"];
 // IP kısıtı (adminNetwork.ts) Docker arkasında yanlış IP görüp sürekli 403 verdiği için kapalı.
 // Gerekirse ters vekil / güvenlik duvarı ile sınırlandırın.
@@ -299,7 +309,12 @@ async function runSubmitFlowRules(params: {
       `| Soru | Yanit | Durum |\n` +
       `|---|---|---|\n` +
       `${reportRows.length ? reportRows.join("\n") : "| (Formda soru yok) | - | - |"}`;
-    await notify(action.emails, subject, defaultBody);
+    try {
+      await notify(action.emails, subject, defaultBody);
+    } catch (err) {
+      // Bildirim hatasi form kaydini bozmasin; sadece loglayip devam et.
+      console.error("Submit flow notify error", { ruleId: rule.id, error: err });
+    }
   }
 }
 
