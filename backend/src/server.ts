@@ -272,6 +272,22 @@ function formatAnswerForReport(
     return String(rawAnswer);
   }
 }
+function inferQuestionTypeFromRaw(rawAnswer: unknown): string {
+  if (typeof rawAnswer === "string") {
+    if (rawAnswer.startsWith("data:")) return "FILE";
+    return "TEXT";
+  }
+  if (typeof rawAnswer === "number") return "NUMBER";
+  if (typeof rawAnswer === "boolean") return "AGREEMENT";
+  if (Array.isArray(rawAnswer)) return "MULTI_CHOICE";
+  if (rawAnswer && typeof rawAnswer === "object") {
+    const obj = rawAnswer as Record<string, unknown>;
+    const maybeUrl = typeof obj.url === "string" ? obj.url : typeof obj.src === "string" ? obj.src : "";
+    if (maybeUrl.startsWith("data:") || /^https?:\/\//i.test(maybeUrl)) return "FILE";
+    return "GRID";
+  }
+  return "TEXT";
+}
 
 async function runSubmitFlowRules(params: {
   form: { id: string; title: string; questions: Array<{ id: string; title: string; type: string; optionsJson: string; rowsJson: string | null }> };
@@ -813,10 +829,11 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
   const rawLimit = Number(req.query.limit ?? "200");
   const limit = Number.isFinite(rawLimit) ? Math.min(1000, Math.max(50, Math.trunc(rawLimit))) : 200;
   const recentSubmissions = form.submissions.slice(-limit).reverse();
+  const questionById = new Map(questions.map((q) => [q.id, q]));
 
   const submissionRows = recentSubmissions.map((s) => {
     const answers = JSON.parse(s.answersJson) as Record<string, unknown>;
-    const answerList = questions
+    const knownAnswerList = questions
       .filter((q) => q.type !== "PAGE_BREAK")
       .map((q) => ({
         questionId: q.id,
@@ -828,6 +845,16 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
           answers[q.id]
         ),
       }));
+    const extraAnswerList = Object.entries(answers)
+      .filter(([qid]) => !questionById.has(qid))
+      .map(([qid, raw]) => ({
+        questionId: qid,
+        questionTitle: `Silinmis soru (${qid.slice(0, 8)})`,
+        questionType: inferQuestionTypeFromRaw(raw),
+        rawAnswer: raw,
+        answer: typeof raw === "string" ? raw : JSON.stringify(raw),
+      }));
+    const answerList = [...knownAnswerList, ...extraAnswerList];
     return {
       submissionId: s.id,
       createdAt: s.createdAt.toISOString(),
@@ -837,6 +864,7 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
 
   res.json({
     formId: form.id,
+    slug: form.slug,
     title: form.title,
     totalSubmissions: form.submissions.length,
     timeline,
@@ -845,6 +873,72 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
     questions: questions.map((q) => ({ id: q.id, title: q.title, description: q.description, type: q.type })),
     submissions: submissionRows,
     submissionsLimit: limit,
+  });
+});
+
+app.get("/api/public/powerbi/forms/:slug/submissions", async (req, res) => {
+  const expectedKey = (process.env.POWERBI_API_KEY ?? "").trim();
+  if (expectedKey) {
+    const provided = String(req.query.key ?? "").trim();
+    if (!provided || provided !== expectedKey) return res.status(401).json({ error: "Gecersiz API key" });
+  }
+  const form = await prisma.form.findFirst({
+    where: { slug: req.params.slug },
+    include: { questions: { orderBy: { orderIndex: "asc" } }, submissions: { orderBy: { createdAt: "desc" } } },
+  });
+  if (!form) return res.status(404).json({ error: "Form bulunamadi" });
+  if (!form.published) {
+    const allowHome = await canAccessPage(req, "HOME");
+    if (!allowHome) return res.status(403).json({ error: "Form yayinda degil; bu IP ile erisim yok" });
+  }
+
+  const rawLimit = Number(req.query.limit ?? "1000");
+  const limit = Number.isFinite(rawLimit) ? Math.min(5000, Math.max(100, Math.trunc(rawLimit))) : 1000;
+  const questions = form.questions.map((q) => ({
+    id: q.id,
+    title: q.title,
+    type: q.type,
+    options: JSON.parse(q.optionsJson || "[]") as Array<{ id: string; label: string }>,
+    rows: JSON.parse(q.rowsJson || "[]") as Array<{ id: string; label: string }>,
+  }));
+  const questionById = new Map(questions.map((q) => [q.id, q]));
+  const recent = form.submissions.slice(0, limit);
+  const rows: Array<Record<string, unknown>> = [];
+
+  for (const s of recent) {
+    const answers = JSON.parse(s.answersJson) as Record<string, unknown>;
+    for (const [questionId, rawAnswer] of Object.entries(answers)) {
+      const q = questionById.get(questionId);
+      const questionType = q?.type ?? inferQuestionTypeFromRaw(rawAnswer);
+      const questionTitle = q?.title ?? `Silinmis soru (${questionId.slice(0, 8)})`;
+      const answerText = q
+        ? formatAnswerForReport(
+            { id: q.id, title: q.title, type: q.type, optionsJson: JSON.stringify(q.options), rowsJson: JSON.stringify(q.rows) },
+            rawAnswer
+          )
+        : (typeof rawAnswer === "string" ? rawAnswer : JSON.stringify(rawAnswer));
+      const rawText = typeof rawAnswer === "string" ? rawAnswer : JSON.stringify(rawAnswer);
+      const isImage = rawText.startsWith("data:image/") || /^https?:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(rawText);
+      rows.push({
+        formId: form.id,
+        formSlug: form.slug,
+        formTitle: form.title,
+        submissionId: s.id,
+        submittedAt: s.createdAt.toISOString(),
+        questionId,
+        questionTitle,
+        questionType,
+        answerText,
+        answerRaw: rawText,
+        hasImage: isImage,
+      });
+    }
+  }
+
+  res.json({
+    form: { id: form.id, slug: form.slug, title: form.title },
+    count: rows.length,
+    rows,
   });
 });
 

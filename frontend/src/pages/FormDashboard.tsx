@@ -5,6 +5,7 @@ import { api } from "../api";
 
 type DashboardData = {
   formId: string;
+  slug?: string;
   title: string;
   totalSubmissions: number;
   submissionsLimit?: number;
@@ -55,7 +56,9 @@ export default function FormDashboard() {
   const submissions = Array.isArray(safeData.submissions) ? safeData.submissions : [];
   const safeFormId = typeof safeData.formId === "string" ? safeData.formId : "";
   const formNo = safeFormId ? `FRM-${safeFormId.slice(-6).toUpperCase()}` : "FRM-XXXXXX";
-  const powerBiUrl = id ? `${window.location.origin}/api/forms/${id}/stats?limit=1000` : "";
+  const powerBiUrl = safeData.slug
+    ? `${window.location.origin}/api/public/powerbi/forms/${safeData.slug}/submissions?limit=1000&key=POWERBI_API_KEY`
+    : "";
   const columns = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of submissions) {
@@ -170,7 +173,7 @@ export default function FormDashboard() {
       <div className="card" style={{ marginBottom: "1rem" }}>
         <h3 style={{ marginTop: 0 }}>Power BI Bağlantısı</h3>
         <div style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: "0.6rem" }}>
-          Power BI Web kaynağına aşağıdaki URL'yi verin. Bu endpoint giriş (Bearer token) ister.
+          Power BI Web kaynağına aşağıdaki URL'yi verin. `POWERBI_API_KEY` kısmını sunucudaki anahtar ile değiştirin.
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.6rem" }}>
           <input className="input" readOnly value={powerBiUrl} />
