@@ -533,6 +533,7 @@ app.get("/api/forms", authMiddleware, requireAuth, async (req, res) => {
   });
   res.json(forms.map((f) => ({
     id: f.id,
+    formNo: f.formNo,
     title: f.title,
     description: f.description,
     slug: f.slug,
@@ -572,13 +573,14 @@ function parseQuotaEntities(json: string): string[] {
 }
 
 function serializeForm(form: {
-  id: string; title: string; description: string | null; slug: string; published: boolean; revision: number;
+  id: string; formNo: string | null; title: string; description: string | null; slug: string; published: boolean; revision: number;
   periodUnit: string; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; slaHours: number | null; notifyEmails: string; notifyAt: string;
   quotaQuestionId: string | null; quotaEntityListJson: string;
   questions: Array<{ id: string; type: string; title: string; description: string | null; required: boolean; optionsJson: string; rowsJson: string | null; showWhenJson: string | null; orderIndex: number }>;
 }) {
   return {
     id: form.id,
+    formNo: form.formNo,
     title: form.title,
     description: form.description,
     slug: form.slug,
@@ -616,6 +618,7 @@ app.get("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
 app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const body = z.object({
+    formNo: z.string().trim().max(80).nullable().optional(),
     title: z.string().min(1).optional(),
     description: z.string().nullable().optional(),
     published: z.boolean().optional(),
@@ -632,6 +635,7 @@ app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
   const data: Record<string, unknown> = { revision: { increment: 1 } };
   if (body.data.title !== undefined) data.title = body.data.title;
+  if (body.data.formNo !== undefined) data.formNo = (body.data.formNo || "").trim() || null;
   if (body.data.description !== undefined) data.description = body.data.description;
   if (body.data.published !== undefined) data.published = body.data.published;
   if (body.data.slaHours !== undefined) data.slaHours = body.data.slaHours;
@@ -864,6 +868,7 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
 
   res.json({
     formId: form.id,
+    formNo: form.formNo,
     slug: form.slug,
     title: form.title,
     totalSubmissions: form.submissions.length,
@@ -921,6 +926,7 @@ app.get("/api/public/powerbi/forms/:slug/submissions", async (req, res) => {
       const isImage = rawText.startsWith("data:image/") || /^https?:\/\/.+\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(rawText);
       rows.push({
         formId: form.id,
+        formNo: form.formNo,
         formSlug: form.slug,
         formTitle: form.title,
         submissionId: s.id,

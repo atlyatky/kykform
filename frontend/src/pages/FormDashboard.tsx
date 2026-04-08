@@ -5,6 +5,7 @@ import { api } from "../api";
 
 type DashboardData = {
   formId: string;
+  formNo?: string | null;
   slug?: string;
   title: string;
   totalSubmissions: number;
@@ -55,7 +56,7 @@ export default function FormDashboard() {
   };
   const submissions = Array.isArray(safeData.submissions) ? safeData.submissions : [];
   const safeFormId = typeof safeData.formId === "string" ? safeData.formId : "";
-  const formNo = safeFormId ? `FRM-${safeFormId.slice(-6).toUpperCase()}` : "FRM-XXXXXX";
+  const formNo = (safeData.formNo || "").trim() || (safeFormId ? `FRM-${safeFormId.slice(-6).toUpperCase()}` : "FRM-XXXXXX");
   const powerBiUrl = safeData.slug
     ? `${window.location.origin}/api/public/powerbi/forms/${safeData.slug}/submissions?limit=1000&key=POWERBI_API_KEY`
     : "";

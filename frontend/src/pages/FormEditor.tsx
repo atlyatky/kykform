@@ -15,7 +15,7 @@ type FlowAction = { kind: "SEND_EMAIL"; emails: string[]; subject?: string; mess
 type FlowRule = { id?: string; name: string; enabled: boolean; trigger: "ON_SCHEDULE" | "ON_SUBMIT"; condition: FlowCondition; action: FlowAction; lastFiredAt?: string | null };
 
 type FormPayload = {
-  id: string; title: string; slug: string; published: boolean; revision: number; description: string | null;
+  id: string; formNo?: string | null; title: string; slug: string; published: boolean; revision: number; description: string | null;
   periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR"; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean;
   quotaQuestionId: string | null; quotaEntities: string[];
   questions: Array<{ id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: Q["showWhen"] }>;
@@ -90,7 +90,7 @@ export default function FormEditor() {
   const [activeTab, setActiveTab] = useState<"toolbox" | "controls" | "general">("toolbox");
 
   const [meta, setMeta] = useState<Omit<FormPayload, "questions">>({
-    id: "", title: "", slug: "", published: false, revision: 1, description: "",
+    id: "", formNo: "", title: "", slug: "", published: false, revision: 1, description: "",
     periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false,
     quotaQuestionId: null, quotaEntities: [],
   });
@@ -253,42 +253,89 @@ export default function FormEditor() {
     return `"${names || "soru seçin"}" sorularında "${rule.condition.expectedLabel || "değer"}" ${rule.condition.mode === "ALL" ? "hepsinde" : "en az birinde"} seçilirse ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildirim at.`;
   };
   const buildRuleTestPayload = (rule: FlowRule): { subject: string; message: string } => {
+    const visibleQuestions = questions.filter((q) => q.type !== "PAGE_BREAK");
+    const renderQuestionPreview = (q: Q): string[] => {
+      if (q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE") {
+        const expected = rule.condition.kind === "ANSWER_LABEL_MATCH" ? rule.condition.expectedLabel.trim().toLocaleLowerCase("tr") : "";
+        const options = q.options ?? [];
+        const chosenId =
+          options.find((o) => (o.label || "").trim().toLocaleLowerCase("tr") === expected)?.id ??
+          options[0]?.id ??
+          "";
+        const rows = options.map((o) => {
+          const picked = o.id === chosenId;
+          const isBad = picked && expected && (o.label || "").trim().toLocaleLowerCase("tr") === expected;
+          return `${isBad ? "🔴" : picked ? "🟢" : "⚪"} ${o.label || "Seçenek"}`;
+        });
+        return rows.length ? rows : ["⚪ (Seçenek yok)"];
+      }
+      if (q.type === "GRID") {
+        const row = q.rows?.[0]?.label || "Satır 1";
+        const col = q.options?.[0]?.label || "Seçenek 1";
+        return [`🟢 ${row}: ${col}`];
+      }
+      if (q.type === "AGREEMENT") return ["🟢 Onaylandı"];
+      if (q.type === "NUMBER") return ["🟢 1"];
+      if (q.type === "DATE") return ["🟢 07.04.2026"];
+      if (q.type === "FILE") return ["🟢 dosya.pdf"];
+      return ["🟢 Test yanıtı"];
+    };
+
     if (rule.condition.kind === "ANSWER_LABEL_MATCH") {
       const now = new Date();
+      const questionRows = visibleQuestions.map((q) => {
+        const preview = renderQuestionPreview(q);
+        const chosen = preview.find((x) => x.startsWith("🔴") || x.startsWith("🟢")) ?? preview[0] ?? "⚪ (bos)";
+        const durum = chosen.startsWith("🔴") ? "🔴 Uygunsuz" : chosen.startsWith("⚪") ? "⚪ Bos" : "🟢 Uygun";
+        const yanit = chosen.replace(/^([🔴🟢⚪])\s*/, "");
+        return `| ${q.title || "İsimsiz soru"} | ${yanit} | ${durum} |`;
+      });
       return {
         subject: "Uygunsuzluk Girişi Yapılmıştır",
         message: [
-          `Tarih: ${now.toLocaleDateString("tr-TR")}`,
-          `Saat: ${now.toLocaleTimeString("tr-TR")}`,
-          "Form Adı: TEST FORM",
+          "| Alan | Deger |",
+          "|---|---|",
+          `| Tarih | ${now.toLocaleDateString("tr-TR")} |`,
+          `| Saat | ${now.toLocaleTimeString("tr-TR")} |`,
+          "| Form Adi | TEST FORM |",
           "",
-          "Formun Dolu Görünümü:",
+          "### Formun Dolu Gorunumu",
           "",
-          "🔴 Kontrol Maddesi 1",
-          "Uygunsuz",
-          "",
-          "🟢 Kontrol Maddesi 2",
-          "Uygun",
-          "",
-          "🟢 Aciklama",
-          "Test aciklama metni",
+          "| Soru | Yanit | Durum |",
+          "|---|---|---|",
+          ...(questionRows.length ? questionRows : ["| (Formda soru yok) | - | - |"]),
         ].join("\n"),
       };
     }
+    const entityQuestion = questions.find((q) => q.id && q.id === rule.condition.questionId);
+    const targetEntities =
+      (rule.condition.entities ?? []).length > 0
+        ? (rule.condition.entities ?? [])
+        : (entityQuestion?.options ?? []).map((o) => o.id);
+    const optionLabelById = new Map((entityQuestion?.options ?? []).map((o) => [o.id, o.label || o.id]));
+    const rows = targetEntities.map((entityId, idx) => {
+      const label = optionLabelById.get(entityId) ?? entityId;
+      const done = idx % 2 === 0;
+      const time = done ? "14:47" : "-";
+      return `| ${label} | ${done ? "Dolduruldu ✅" : "Doldurulmadi ❌"} | ${time} |`;
+    });
+    const missingCount = rows.filter((_, idx) => idx % 2 !== 0).length;
     return {
       subject: `[KYK Form Rapor] Doldurulmadi Kontrolu: TEST FORM`,
       message: [
-        "Form: TEST FORM",
-        `Kural: ${rule.name || "Doldurulmadi"}`,
-        `Rapor saati: ${rule.condition.reportTime ?? "09:00"}`,
-        "Dönem başlangıcı: 2026-01-01T00:00:00.000Z",
+        "| Alan | Deger |",
+        "|---|---|",
+        "| Form | TEST FORM |",
+        `| Kural | ${rule.name || "Doldurulmadi"} |`,
+        `| Rapor saati | ${rule.condition.reportTime ?? "09:00"} |`,
+        "| Donem baslangici | 2026-01-01T00:00:00.000Z |",
+        `| Toplam varlik | ${targetEntities.length} |`,
         "",
-        "| Durum | Varlik | Gerceklesen |",
+        "| Varlik | Durum | Gelis saati |",
         "|---|---|---|",
-        "| Dolduruldu ✅ | FL-01 | 1 / 1 |",
-        "| Doldurulmadi ❌ | FL-02 | 0 / 1 |",
+        ...(rows.length ? rows : ["| (Varlik yok) | - | - |"]),
         "",
-        "Eksik varlik sayisi: 1",
+        `Eksik varlik sayisi: ${missingCount}`,
       ].join("\n"),
     };
   };
@@ -309,7 +356,7 @@ export default function FormEditor() {
         <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <h1 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, color: "var(--text)" }}>{meta.title || "İsimsiz Form"}</h1>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", color: "var(--muted)" }}>
-            <span style={{ fontWeight: 500, color: "var(--primary)" }}>FRM-{meta.id.slice(-6).toUpperCase()}</span>
+            <span style={{ fontWeight: 500, color: "var(--primary)" }}>{meta.formNo?.trim() || `FRM-${meta.id.slice(-6).toUpperCase()}`}</span>
             <span>•</span>
             <span>Rev: {meta.revision}</span>
             <span>•</span>
@@ -380,6 +427,15 @@ export default function FormEditor() {
                 </div>
               </div>
 
+              <div style={{ marginBottom: "1rem" }}>
+                <label>Form numarası (elle)</label>
+                <input
+                  className="input"
+                  placeholder="Orn: FRM-2026-001"
+                  value={meta.formNo || ""}
+                  onChange={e => setMeta(m => ({ ...m, formNo: e.target.value }))}
+                />
+              </div>
               <div style={{ marginBottom: "1rem" }}>
                 <label>Form başlığı</label>
                 <input className="input" value={meta.title} onChange={e => setMeta(m => ({ ...m, title: e.target.value }))} />

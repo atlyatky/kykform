@@ -8,7 +8,7 @@ type Opt = { id: string; label: string; parentOptionIds?: string[]; score?: numb
 type Row = { id: string; label: string };
 type QType = "TEXT" | "TEXTAREA" | "SINGLE_CHOICE" | "MULTI_CHOICE" | "NUMBER" | "DATE" | "FILE" | "GRID" | "PAGE_BREAK" | "AGREEMENT";
 type Q = { id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: { questionId: string; optionIds: string[] } | null; };
-type FormPayload = { id: string; title: string; description: string | null; questions: Q[] };
+type FormPayload = { id: string; formNo?: string | null; title: string; description: string | null; questions: Q[] };
 
 function createId() {
   const c = globalThis.crypto as Crypto | undefined;
@@ -68,7 +68,7 @@ export default function PublicForm() {
   if (loading) return <div className="layout">Yükleniyor...</div>;
   if (!form) return <div className="layout">{msg}</div>;
 
-  const formNo = `FRM-${form.id.slice(-6).toUpperCase()}`;
+  const formNo = (form.formNo || "").trim() || `FRM-${form.id.slice(-6).toUpperCase()}`;
 
   // Pagination logic
   const pages: Q[][] = [[]];

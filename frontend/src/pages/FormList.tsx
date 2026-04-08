@@ -7,6 +7,7 @@ import { AdminHeaderActions } from "../components/AdminHeaderActions";
 
 type Row = {
   id: string;
+  formNo?: string | null;
   title: string;
   slug: string;
   published: boolean;
@@ -128,7 +129,7 @@ export default function FormList() {
               <tr><td style={{ padding: "1rem" }} colSpan={8}>Form bulunamadı.</td></tr>
             ) : (
               rows.map((f) => {
-                const formNo = `FRM-${f.id.slice(-6).toUpperCase()}`;
+                const formNo = (f.formNo || "").trim() || `FRM-${f.id.slice(-6).toUpperCase()}`;
                 return (
                   <tr key={f.id} style={{ borderTop: "1px solid var(--border)" }}>
                     <td style={{ padding: "0.8rem", fontFamily: "monospace", color: "var(--muted)", fontWeight: 600, fontSize: "0.85rem" }}>{formNo}</td>
@@ -163,7 +164,7 @@ export default function FormList() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(6,24,48,.5)", display: "grid", placeItems: "center", zIndex: 20 }} onClick={() => setQrForm(null)}>
           <div className="card" style={{ width: 350 }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ marginTop: 0 }}>{qrForm.title}</h3>
-            <div className="badge" style={{ marginBottom: 8 }}>Form No: FRM-{qrForm.id.slice(-6).toUpperCase()}</div>
+            <div className="badge" style={{ marginBottom: 8 }}>Form No: {(qrForm.formNo || "").trim() || `FRM-${qrForm.id.slice(-6).toUpperCase()}`}</div>
             <img src={qrImgSrc} alt="qr" style={{ width: 290, height: 290, display: "block", margin: "0 auto", background: "#fff", padding: 8 }} />
             <button className="btn" style={{ width: "100%", marginTop: "0.8rem" }} type="button" onClick={() => setQrForm(null)}><Eye size={15} /> Kapat</button>
           </div>
