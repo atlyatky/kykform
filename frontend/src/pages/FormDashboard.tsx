@@ -55,6 +55,7 @@ export default function FormDashboard() {
   const submissions = Array.isArray(safeData.submissions) ? safeData.submissions : [];
   const safeFormId = typeof safeData.formId === "string" ? safeData.formId : "";
   const formNo = safeFormId ? `FRM-${safeFormId.slice(-6).toUpperCase()}` : "FRM-XXXXXX";
+  const powerBiUrl = id ? `${window.location.origin}/api/forms/${id}/stats?limit=1000` : "";
   const columns = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of submissions) {
@@ -104,6 +105,15 @@ export default function FormDashboard() {
     () => filteredRows.find((r) => r.submissionId === selectedSubmissionId) ?? null,
     [filteredRows, selectedSubmissionId]
   );
+
+  async function copyPowerBiUrl() {
+    if (!powerBiUrl) return;
+    try {
+      await navigator.clipboard.writeText(powerBiUrl);
+    } catch {
+      // ignore
+    }
+  }
 
   function getImageSrc(answerItem: { questionType?: string; rawAnswer?: unknown; answer: string }): string | null {
     const fromRaw = answerItem.rawAnswer;
@@ -157,8 +167,19 @@ export default function FormDashboard() {
         </div>
       )}
 
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <h3 style={{ marginTop: 0 }}>Power BI Bağlantısı</h3>
+        <div style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: "0.6rem" }}>
+          Power BI Web kaynağına aşağıdaki URL'yi verin. Bu endpoint giriş (Bearer token) ister.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.6rem" }}>
+          <input className="input" readOnly value={powerBiUrl} />
+          <button type="button" className="btn" onClick={() => void copyPowerBiUrl()}>Kopyala</button>
+        </div>
+      </div>
+
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Form Girişleri (Kart)</h3>
+        <h3 style={{ marginTop: 0 }}>Form Girişleri (Tablo)</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "0.6rem", marginBottom: "0.9rem" }}>
           <input
             className="input"
@@ -172,45 +193,57 @@ export default function FormDashboard() {
         {submissions.length === 0 ? (
           <div style={{ color: "var(--muted)" }}>Henüz form girişi yok.</div>
         ) : (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "0.8rem" }}>
-              {filteredRows.map((r) => {
-                const firstImage = r.answerList.map((a) => getImageSrc(a)).find(Boolean) ?? null;
-                return (
-                  <button
-                    key={r.submissionId}
-                    type="button"
-                    className="btn"
-                    onClick={() => setSelectedSubmissionId(r.submissionId)}
-                    style={{
-                      textAlign: "left",
-                      display: "block",
-                      width: "100%",
-                      padding: "0.8rem",
-                      borderRadius: "10px",
-                      border: "1px solid var(--border)",
-                      background: "var(--surface)",
-                    }}
-                  >
-                    <div style={{ fontWeight: 700, marginBottom: "0.35rem" }}>Kayıt #{r.submissionId.slice(0, 8)}</div>
-                    <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginBottom: "0.55rem" }}>{r.dateText} {r.timeText}</div>
-                    {firstImage ? (
-                      <img
-                        src={firstImage}
-                        alt="Yuklenen gorsel"
-                        style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)", marginBottom: "0.5rem" }}
-                      />
-                    ) : null}
-                    <div style={{ display: "grid", gap: "0.3rem" }}>
-                      {r.answerList.slice(0, 3).map((a) => (
-                        <div key={`${r.submissionId}-${a.questionId}`} style={{ fontSize: "0.82rem" }}>
-                          <strong>{a.questionTitle}:</strong> {a.answer || "-"}
-                        </div>
-                      ))}
-                    </div>
-                  </button>
-                );
-              })}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr style={{ background: "var(--surface2)" }}>
+                  <th style={{ textAlign: "left", padding: "0.65rem", borderBottom: "1px solid var(--border)" }}>Kayıt ID</th>
+                  <th style={{ textAlign: "left", padding: "0.65rem", borderBottom: "1px solid var(--border)" }}>Tarih</th>
+                  <th style={{ textAlign: "left", padding: "0.65rem", borderBottom: "1px solid var(--border)" }}>Saat</th>
+                  <th style={{ textAlign: "left", padding: "0.65rem", borderBottom: "1px solid var(--border)" }}>Önizleme</th>
+                  <th style={{ textAlign: "left", padding: "0.65rem", borderBottom: "1px solid var(--border)" }}>Görsel</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((r) => {
+                  const firstImage = r.answerList.map((a) => getImageSrc(a)).find(Boolean) ?? null;
+                  return (
+                    <tr
+                      key={r.submissionId}
+                      onClick={() => setSelectedSubmissionId(r.submissionId)}
+                      style={{ cursor: "pointer" }}
+                      title="Detay icin tiklayin"
+                    >
+                      <td style={{ padding: "0.6rem", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap", fontWeight: 700 }}>
+                        {r.submissionId ? r.submissionId.slice(0, 8) : "-"}
+                      </td>
+                      <td style={{ padding: "0.6rem", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>{r.dateText}</td>
+                      <td style={{ padding: "0.6rem", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>{r.timeText}</td>
+                      <td style={{ padding: "0.6rem", borderBottom: "1px solid var(--border)", minWidth: 320 }}>
+                        {r.answerList.slice(0, 2).map((a) => (
+                          <div key={`${r.submissionId}-${a.questionId}`} style={{ fontSize: "0.82rem" }}>
+                            <strong>{a.questionTitle}:</strong> {a.answer || "-"}
+                          </div>
+                        ))}
+                      </td>
+                      <td style={{ padding: "0.6rem", borderBottom: "1px solid var(--border)" }}>
+                        {firstImage ? (
+                          <img
+                            src={firstImage}
+                            alt="Onizleme"
+                            style={{ width: 68, height: 48, objectFit: "cover", borderRadius: 6, border: "1px solid var(--border)" }}
+                          />
+                        ) : (
+                          <span style={{ color: "var(--muted)", fontSize: "0.82rem" }}>Yok</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginTop: "0.55rem" }}>
+              Satıra tıklayınca ilgili form kaydının detay görünümü açılır.
             </div>
             {filteredRows.length === 0 && <div style={{ color: "var(--muted)", paddingTop: "0.7rem" }}>Filtreye uygun kayıt bulunamadı.</div>}
           </div>
