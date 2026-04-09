@@ -13,18 +13,7 @@ type Row = {
   title: string;
   slug: string;
   published: boolean;
-  revision: number;
-  periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR";
-  periodValue: number;
-  expectedSubmissions: number;
-  invalidAlertEnabled: boolean;
   submissionCount: number;
-};
-
-const periodLabel = (u: Row["periodUnit"], v: number, c: number) => {
-  if (u === "NONE") return "Yok";
-  const unitStr = u === "DAY" ? "gün" : u === "MONTH" ? "ay" : "yıl";
-  return `Her ${v} ${unitStr} (${c} adet)`;
 };
 
 export default function FormList() {
@@ -111,24 +100,22 @@ export default function FormList() {
       </section>
 
       <div className="card" style={{ overflowX: "auto", padding: 0 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
           <thead>
             <tr style={{ background: "var(--surface2)", textAlign: "left" }}>
               <th style={{ padding: "0.8rem", width: "120px", fontSize: "0.85rem" }}>Form No</th>
               <th style={{ padding: "0.8rem", fontSize: "0.85rem" }}>Başlık</th>
               <th style={{ padding: "0.8rem", fontSize: "0.85rem" }}>Durum</th>
               <th style={{ padding: "0.8rem", fontSize: "0.85rem" }}>Revizyon</th>
-              <th style={{ padding: "0.8rem", fontSize: "0.85rem" }}>Periyot</th>
-              <th style={{ padding: "0.8rem", fontSize: "0.85rem" }}>Uygunsuz</th>
               <th style={{ padding: "0.8rem", fontSize: "0.85rem" }}>Yanıt</th>
               <th style={{ padding: "0.8rem", fontSize: "0.85rem", textAlign: "right" }}>İşlemler</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td style={{ padding: "1rem" }} colSpan={8}>Yükleniyor...</td></tr>
+              <tr><td style={{ padding: "1rem" }} colSpan={6}>Yükleniyor...</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td style={{ padding: "1rem" }} colSpan={8}>Form bulunamadı.</td></tr>
+              <tr><td style={{ padding: "1rem" }} colSpan={6}>Form bulunamadı.</td></tr>
             ) : (
               rows.map((f) => {
                 const formNo = (f.formNo || "").trim() || `FRM-${f.id.slice(-6).toUpperCase()}`;
@@ -145,8 +132,6 @@ export default function FormList() {
                         {f.revisionDate ? new Date(f.revisionDate).toLocaleDateString("tr-TR") : "-"}
                       </div>
                     </td>
-                    <td style={{ padding: "0.8rem", fontSize: "0.85rem" }}>{periodLabel(f.periodUnit, f.periodValue, f.expectedSubmissions)}</td>
-                    <td style={{ padding: "0.8rem", fontSize: "0.85rem" }}>{f.invalidAlertEnabled ? "Aktif" : "Pasif"}</td>
                     <td style={{ padding: "0.8rem", fontSize: "0.85rem" }}>{f.submissionCount}</td>
                     <td style={{ padding: "0.8rem" }}>
                       <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
