@@ -45,10 +45,19 @@ function periodStartByParts(unit: "DAY" | "MONTH" | "YEAR", value: number, now: 
   return new Date(Date.UTC(now.getUTCFullYear() - (v - 1), 0, 1));
 }
 
-function shouldSendNow(lastFiredAt: Date | null, now: Date): boolean {
+function shouldSendNow(lastFiredAt: Date | null, now: Date, hhmm: string | undefined): boolean {
   if (!lastFiredAt) return true;
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  return lastFiredAt < oneDayAgo;
+  const sameDay =
+    lastFiredAt.getFullYear() === now.getFullYear() &&
+    lastFiredAt.getMonth() === now.getMonth() &&
+    lastFiredAt.getDate() === now.getDate();
+  if (!sameDay) return true;
+  const raw = (hhmm ?? "09:00").trim();
+  const [h, m] = raw.split(":").map((x) => Number(x));
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return false;
+  const scheduledToday = new Date(now);
+  scheduledToday.setHours(h, m, 0, 0);
+  return lastFiredAt < scheduledToday && now >= scheduledToday;
 }
 
 function shouldRunAtTime(now: Date, hhmm: string | undefined): boolean {
@@ -111,8 +120,14 @@ async function runFlowRules(now: Date) {
     }
 
     const targets = (condition.entities ?? []).map((x) => x.trim()).filter(Boolean);
-    const entitySet = new Set<string>(targets);
-    if (entitySet.size === 0) {
+    const allOptionIds = Array.from(optionLabelById.keys());
+    const entitySet = new Set<string>();
+    if (targets.length > 0) {
+      for (const t of targets) entitySet.add(t);
+    } else if (allOptionIds.length > 0) {
+      // Varlik secimi bos ise soru seceneklerindeki tum varliklari raporla.
+      for (const optionId of allOptionIds) entitySet.add(optionId);
+    } else {
       for (const k of counts.keys()) entitySet.add(k);
     }
     const statusRows: string[] = [];
@@ -130,18 +145,21 @@ async function runFlowRules(now: Date) {
         deficits.push(`  • ${label}: ${c} / ${condition.minCount}`);
       }
     }
-    if (!shouldSendNow(rule.lastFiredAt, now)) continue;
+    if (!shouldSendNow(rule.lastFiredAt, now, condition.reportTime)) continue;
 
     const subject = action.subject?.trim() || `[KYK Form Rapor] Doldurulmadi Kontrolu: ${rule.form.title}`;
     const defaultBody = [
-      `Form: ${rule.form.title}`,
-      `Kural: ${rule.name}`,
-      `Rapor saati: ${condition.reportTime ?? "09:00"}`,
-      `Dönem başlangıcı: ${start.toISOString()}`,
+      "| Alan | Deger |",
+      "|---|---|",
+      `| Form | ${rule.form.title} |`,
+      `| Kural | ${rule.name} |`,
+      `| Rapor saati | ${condition.reportTime ?? "09:00"} |`,
+      `| Donem baslangici | ${start.toISOString()} |`,
+      `| Toplam varlik | ${entitySet.size} |`,
       "",
       "| Varlik | Durum | Gelis saati |",
       "|---|---|---|",
-      ...statusRows,
+      ...(statusRows.length > 0 ? statusRows : ["| (Varlik yok) | - | - |"]),
       deficits.length > 0 ? `\nEksik varlik sayisi: ${deficits.length}` : "\nTum varliklar hedefi karsiladi ✅",
     ].join("\n");
     await notify(action.emails, subject, defaultBody);

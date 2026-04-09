@@ -28,6 +28,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
       PORT: 4000
       NODE_ENV: production
+      TZ: Europe/Istanbul
       PUBLIC_FORM_BASE_URL: ${PUBLIC_FORM_BASE_URL:-http://localhost:5174}
       MAIL_HOST: ${MAIL_HOST:-mailhog}
       MAIL_PORT: ${MAIL_PORT:-1025}
