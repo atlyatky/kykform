@@ -5,7 +5,8 @@ import QRCode from "qrcode";
 import speakeasy from "speakeasy";
 import { z } from "zod";
 import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth.js";
-import { notify } from "./notify.js";
+import { notify, type TeamsReportPayload } from "./notify.js";
+import { formatDateTr, formatTimeTr } from "./datetime-tr.js";
 import { prisma } from "./prisma.js";
 import { runSlaCheckOnce } from "./sla.js";
 
@@ -332,25 +333,36 @@ async function runSubmitFlowRules(params: {
         const answer = formatAnswerForReport(q, params.answers[q.id]).replace(/\n+/g, " ").slice(0, 220);
         const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
         const isNonConforming = condition.questionIds.includes(q.id) && selected.includes(expected);
-        const durum = answer === "(bos)" ? "⚪ Bos" : isNonConforming ? "🔴 Uygunsuz" : "🟢 Uygun";
-        return `| ${q.title || q.id} | ${answer || "(bos)"} | ${durum} |`;
+        const durum = answer === "(bos)" ? "⚪ Boş" : isNonConforming ? "🔴 Uygunsuz" : "🟢 Uygun";
+        return [q.title || q.id, answer || "(boş)", durum] as [string, string, string];
       });
     const shownRows = reportRows.slice(0, 20);
     const hiddenCount = reportRows.length - shownRows.length;
     const now = new Date();
-    const defaultBody =
-      `| Alan | Deger |\n` +
-      `|---|---|\n` +
-      `| Tarih | ${now.toLocaleDateString("tr-TR")} |\n` +
-      `| Saat | ${now.toLocaleTimeString("tr-TR")} |\n` +
-      `| Form Adi | ${params.form.title} |\n\n` +
-      `### Formun Dolu Gorunumu\n\n` +
-      `| Soru | Yanit | Durum |\n` +
-      `|---|---|---|\n` +
-      `${shownRows.length ? shownRows.join("\n") : "| (Formda soru yok) | - | - |"}\n` +
-      `${hiddenCount > 0 ? `\n_(+${hiddenCount} satir daha var)_` : ""}`;
+    const reportPayload: TeamsReportPayload = {
+      sections: [
+        {
+          title: "Özet",
+          columns: ["Alan", "Değer"],
+          rows: [
+            ["Tarih", formatDateTr(now)],
+            ["Saat", formatTimeTr(now)],
+            ["Form adı", params.form.title],
+          ],
+        },
+        {
+          title: "Formun dolu görünümü",
+          columns: ["Soru", "Yanıt", "Durum"],
+          rows:
+            shownRows.length > 0
+              ? shownRows.map((r) => [r[0], r[1], r[2]])
+              : [["(Formda soru yok)", "-", "-"]],
+        },
+      ],
+      footnote: hiddenCount > 0 ? `Ayrıca ${hiddenCount} soru satırı daha var (Teams sınırı nedeniyle kısaltıldı).` : undefined,
+    };
     try {
-      await notify(action.emails, subject, defaultBody);
+      await notify(action.emails, subject, reportPayload);
     } catch (err) {
       // Bildirim hatasi form kaydini bozmasin; sadece loglayip devam et.
       console.error("Submit flow notify error", { ruleId: rule.id, error: err });
@@ -729,7 +741,9 @@ app.post("/api/notify/test", authMiddleware, requireAuth, async (req, res) => {
   }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Gecersiz test bildirimi" });
   const subject = body.data.subject?.trim() || "KYK Form Test Bildirimi";
-  const message = body.data.message?.trim() || `Bu bir test bildirimi.\nSaat: ${new Date().toISOString()}`;
+  const message =
+    body.data.message?.trim() ||
+    `Bu bir test bildirimi.\nTürkiye saati: ${formatDateTr(new Date())} ${formatTimeTr(new Date())}`;
   await notify(body.data.urls, subject, message);
   res.json({ ok: true, count: body.data.urls.length });
 });

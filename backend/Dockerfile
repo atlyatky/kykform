@@ -15,6 +15,7 @@ COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
+COPY scripts ./scripts
 COPY docker-entrypoint.sh ./
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 EXPOSE 4000

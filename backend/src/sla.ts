@@ -1,5 +1,6 @@
 ﻿import { prisma } from "./prisma.js";
-import { notify } from "./notify.js";
+import { notify, type TeamsReportPayload } from "./notify.js";
+import { formatDateTimeTr, formatTimeTr } from "./datetime-tr.js";
 
 function entityKeyFromAnswers(answers: Record<string, unknown>, qid: string): string {
   const raw = answers[qid];
@@ -130,39 +131,47 @@ async function runFlowRules(now: Date) {
     } else {
       for (const k of counts.keys()) entitySet.add(k);
     }
-    const statusRows: string[] = [];
+    const statusRows: string[][] = [];
     const deficits: string[] = [];
     for (const ent of entitySet) {
       const c = counts.get(ent) ?? 0;
       const label = optionLabelById.get(ent) ?? ent;
       const ok = c >= condition.minCount;
       const latest = latestByEntity.get(ent);
-      const timeText = latest
-        ? latest.toISOString().slice(11, 16)
-        : "-";
-      statusRows.push(`| ${label} | ${ok ? "Dolduruldu ✅" : "Doldurulmadi ❌"} | ${timeText} |`);
+      const timeText = latest ? formatTimeTr(latest) : "-";
+      statusRows.push([label, ok ? "Dolduruldu ✅" : "Doldurulmadı ❌", timeText]);
       if (c < condition.minCount) {
-        deficits.push(`  • ${label}: ${c} / ${condition.minCount}`);
+        deficits.push(`• ${label}: ${c} / ${condition.minCount}`);
       }
     }
     if (!shouldSendNow(rule.lastFiredAt, now, condition.reportTime)) continue;
 
-    const subject = action.subject?.trim() || `[KYK Form Rapor] Doldurulmadi Kontrolu: ${rule.form.title}`;
-    const defaultBody = [
-      "| Alan | Deger |",
-      "|---|---|",
-      `| Form | ${rule.form.title} |`,
-      `| Kural | ${rule.name} |`,
-      `| Rapor saati | ${condition.reportTime ?? "09:00"} |`,
-      `| Donem baslangici | ${start.toISOString()} |`,
-      `| Toplam varlik | ${entitySet.size} |`,
-      "",
-      "| Varlik | Durum | Gelis saati |",
-      "|---|---|---|",
-      ...(statusRows.length > 0 ? statusRows : ["| (Varlik yok) | - | - |"]),
-      deficits.length > 0 ? `\nEksik varlik sayisi: ${deficits.length}` : "\nTum varliklar hedefi karsiladi ✅",
-    ].join("\n");
-    await notify(action.emails, subject, defaultBody);
+    const subject = action.subject?.trim() || `[KYK Form Rapor] Doldurulmadı kontrolü: ${rule.form.title}`;
+    const reportPayload: TeamsReportPayload = {
+      sections: [
+        {
+          title: "Özet",
+          columns: ["Alan", "Değer"],
+          rows: [
+            ["Form", rule.form.title],
+            ["Kural", rule.name],
+            ["Rapor saati", condition.reportTime ?? "09:00"],
+            ["Dönem başlangıcı", formatDateTimeTr(start)],
+            ["Toplam varlık", String(entitySet.size)],
+          ],
+        },
+        {
+          title: "Varlık durumu",
+          columns: ["Varlık", "Durum", "Son kayıt saati (TR)"],
+          rows: statusRows.length > 0 ? statusRows : [["(Varlık yok)", "-", "-"]],
+        },
+      ],
+      footnote:
+        deficits.length > 0
+          ? `Eksik varlık sayısı: ${deficits.length}\n${deficits.slice(0, 8).join("\n")}`
+          : "Tüm varlıklar hedefi karşıladı ✅",
+    };
+    await notify(action.emails, subject, reportPayload);
     await prisma.formFlowRule.update({ where: { id: rule.id }, data: { lastFiredAt: now } });
   }
 }
