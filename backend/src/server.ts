@@ -546,6 +546,8 @@ app.get("/api/forms", authMiddleware, requireAuth, async (req, res) => {
   res.json(forms.map((f) => ({
     id: f.id,
     formNo: f.formNo,
+    revisionNo: f.revisionNo,
+    revisionDate: f.revisionDate ? f.revisionDate.toISOString() : null,
     title: f.title,
     description: f.description,
     slug: f.slug,
@@ -585,7 +587,8 @@ function parseQuotaEntities(json: string): string[] {
 }
 
 function serializeForm(form: {
-  id: string; formNo: string | null; title: string; description: string | null; slug: string; published: boolean; revision: number;
+  id: string; formNo: string | null; revisionNo: string | null; revisionDate: Date | null;
+  title: string; description: string | null; slug: string; published: boolean; revision: number;
   periodUnit: string; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean; slaHours: number | null; notifyEmails: string; notifyAt: string;
   quotaQuestionId: string | null; quotaEntityListJson: string;
   questions: Array<{ id: string; type: string; title: string; description: string | null; required: boolean; optionsJson: string; rowsJson: string | null; showWhenJson: string | null; orderIndex: number }>;
@@ -593,6 +596,8 @@ function serializeForm(form: {
   return {
     id: form.id,
     formNo: form.formNo,
+    revisionNo: form.revisionNo,
+    revisionDate: form.revisionDate ? form.revisionDate.toISOString() : null,
     title: form.title,
     description: form.description,
     slug: form.slug,
@@ -631,6 +636,8 @@ app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
   if (await denyIfBlocked(req, res, "FORM_EDITOR")) return;
   const body = z.object({
     formNo: z.string().trim().max(80).nullable().optional(),
+    revisionNo: z.string().trim().max(80).nullable().optional(),
+    revisionDate: z.string().trim().max(40).nullable().optional(), // ISO veya YYYY-MM-DD
     title: z.string().min(1).optional(),
     description: z.string().nullable().optional(),
     published: z.boolean().optional(),
@@ -645,9 +652,20 @@ app.patch("/api/forms/:id", authMiddleware, requireAuth, async (req, res) => {
     quotaEntities: z.array(z.string()).optional(),
   }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "Geçersiz veri" });
-  const data: Record<string, unknown> = { revision: { increment: 1 } };
+  // Revizyon otomatik artmasın: revision alanına dokunmuyoruz.
+  const data: Record<string, unknown> = {};
   if (body.data.title !== undefined) data.title = body.data.title;
   if (body.data.formNo !== undefined) data.formNo = (body.data.formNo || "").trim() || null;
+  if (body.data.revisionNo !== undefined) data.revisionNo = (body.data.revisionNo || "").trim() || null;
+  if (body.data.revisionDate !== undefined) {
+    const raw = (body.data.revisionDate || "").trim();
+    if (!raw) data.revisionDate = null;
+    else {
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return res.status(400).json({ error: "Geçersiz revizyon tarihi (ISO veya YYYY-MM-DD girin)" });
+      data.revisionDate = d;
+    }
+  }
   if (body.data.description !== undefined) data.description = body.data.description;
   if (body.data.published !== undefined) data.published = body.data.published;
   if (body.data.slaHours !== undefined) data.slaHours = body.data.slaHours;
@@ -779,7 +797,7 @@ app.put("/api/forms/:id/questions", authMiddleware, requireAuth, async (req, res
     }
     if (kept.length === 0) await tx.question.deleteMany({ where: { formId } });
     else await tx.question.deleteMany({ where: { formId, id: { notIn: kept } } });
-    await tx.form.update({ where: { id: formId }, data: { revision: { increment: 1 } } });
+    // Revizyon otomatik artmasın.
   });
 
   const updated = await prisma.form.findUnique({ where: { id: formId }, include: { questions: { orderBy: { orderIndex: "asc" } } } });
@@ -883,6 +901,8 @@ app.get("/api/forms/:id/stats", authMiddleware, requireAuth, async (req, res) =>
   res.json({
     formId: form.id,
     formNo: form.formNo,
+    revisionNo: form.revisionNo,
+    revisionDate: form.revisionDate ? form.revisionDate.toISOString() : null,
     slug: form.slug,
     title: form.title,
     totalSubmissions: form.submissions.length,

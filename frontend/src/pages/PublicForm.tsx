@@ -8,7 +8,15 @@ type Opt = { id: string; label: string; parentOptionIds?: string[]; score?: numb
 type Row = { id: string; label: string };
 type QType = "TEXT" | "TEXTAREA" | "SINGLE_CHOICE" | "MULTI_CHOICE" | "NUMBER" | "DATE" | "FILE" | "GRID" | "PAGE_BREAK" | "AGREEMENT";
 type Q = { id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: { questionId: string; optionIds: string[] } | null; };
-type FormPayload = { id: string; formNo?: string | null; title: string; description: string | null; questions: Q[] };
+type FormPayload = {
+  id: string;
+  formNo?: string | null;
+  revisionNo?: string | null;
+  revisionDate?: string | null;
+  title: string;
+  description: string | null;
+  questions: Q[];
+};
 
 function createId() {
   const c = globalThis.crypto as Crypto | undefined;
@@ -69,6 +77,8 @@ export default function PublicForm() {
   if (!form) return <div className="layout">{msg}</div>;
 
   const formNo = (form.formNo || "").trim() || `FRM-${form.id.slice(-6).toUpperCase()}`;
+  const revNo = (form.revisionNo || "").trim();
+  const revDateText = form.revisionDate ? new Date(form.revisionDate).toLocaleDateString("tr-TR") : "";
 
   // Pagination logic
   const pages: Q[][] = [[]];
@@ -169,6 +179,11 @@ export default function PublicForm() {
             <span className="badge" style={{ fontSize: "0.85rem", padding: "0.4rem 1rem", background: "var(--surface2)", color: "var(--primary)", border: "none", fontWeight: 600 }}>
               Form No: {formNo}
             </span>
+            {(revNo || revDateText) && (
+              <span className="badge" style={{ fontSize: "0.85rem", padding: "0.4rem 1rem", background: "var(--surface2)", color: "var(--text)", border: "none", fontWeight: 600 }}>
+                Rev: {revNo || "-"} • Tarih: {revDateText || "-"}
+              </span>
+            )}
           </div>
           
           {form.description && (

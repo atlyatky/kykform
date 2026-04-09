@@ -8,6 +8,8 @@ import { AdminHeaderActions } from "../components/AdminHeaderActions";
 type Row = {
   id: string;
   formNo?: string | null;
+  revisionNo?: string | null;
+  revisionDate?: string | null;
   title: string;
   slug: string;
   published: boolean;
@@ -137,7 +139,12 @@ export default function FormList() {
                       <div style={{ fontWeight: 600 }}>{f.title}</div>
                     </td>
                     <td style={{ padding: "0.8rem" }}><span className={f.published ? "badge badge-live" : "badge"}>{f.published ? "Yayında" : "Taslak"}</span></td>
-                    <td style={{ padding: "0.8rem", fontSize: "0.85rem" }}>r{f.revision}</td>
+                    <td style={{ padding: "0.8rem", fontSize: "0.85rem", whiteSpace: "nowrap" }}>
+                      {(f.revisionNo || "").trim() || "-"}
+                      <div style={{ color: "var(--muted)", fontSize: "0.78rem", marginTop: "0.15rem" }}>
+                        {f.revisionDate ? new Date(f.revisionDate).toLocaleDateString("tr-TR") : "-"}
+                      </div>
+                    </td>
                     <td style={{ padding: "0.8rem", fontSize: "0.85rem" }}>{periodLabel(f.periodUnit, f.periodValue, f.expectedSubmissions)}</td>
                     <td style={{ padding: "0.8rem", fontSize: "0.85rem" }}>{f.invalidAlertEnabled ? "Aktif" : "Pasif"}</td>
                     <td style={{ padding: "0.8rem", fontSize: "0.85rem" }}>{f.submissionCount}</td>

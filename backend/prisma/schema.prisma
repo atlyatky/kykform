@@ -40,6 +40,8 @@ enum FormPeriodUnit {
 model Form {
   id                   String         @id @default(cuid())
   formNo               String?
+  revisionNo           String?
+  revisionDate         DateTime?
   title                String
   description          String?
   slug                 String         @unique

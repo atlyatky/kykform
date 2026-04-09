@@ -6,6 +6,8 @@ import { api } from "../api";
 type DashboardData = {
   formId: string;
   formNo?: string | null;
+  revisionNo?: string | null;
+  revisionDate?: string | null;
   slug?: string;
   title: string;
   totalSubmissions: number;
@@ -57,6 +59,8 @@ export default function FormDashboard() {
   const submissions = Array.isArray(safeData.submissions) ? safeData.submissions : [];
   const safeFormId = typeof safeData.formId === "string" ? safeData.formId : "";
   const formNo = (safeData.formNo || "").trim() || (safeFormId ? `FRM-${safeFormId.slice(-6).toUpperCase()}` : "FRM-XXXXXX");
+  const revNo = (safeData.revisionNo || "").trim();
+  const revDateText = safeData.revisionDate ? new Date(safeData.revisionDate).toLocaleDateString("tr-TR") : "";
   const powerBiUrl = safeData.slug
     ? `${window.location.origin}/api/public/powerbi/forms/${safeData.slug}/submissions?limit=1000&key=POWERBI_API_KEY`
     : "";
@@ -150,7 +154,14 @@ export default function FormDashboard() {
           <div>
             <Link to="/" style={{ fontSize: "0.86rem", color: "var(--muted)" }}>← Listeye Dön</Link>
             <h1 style={{ margin: "0.35rem 0 0" }}>{safeData.title} - Analiz</h1>
-            <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Form No: {formNo}</div>
+            <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+              Form No: {formNo}
+              {(revNo || revDateText) && (
+                <>
+                  {" "}• Rev: {revNo || "-"} • Tarih: {revDateText || "-"}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </header>

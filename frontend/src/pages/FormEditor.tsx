@@ -15,7 +15,11 @@ type FlowAction = { kind: "SEND_EMAIL"; emails: string[]; subject?: string; mess
 type FlowRule = { id?: string; name: string; enabled: boolean; trigger: "ON_SCHEDULE" | "ON_SUBMIT"; condition: FlowCondition; action: FlowAction; lastFiredAt?: string | null };
 
 type FormPayload = {
-  id: string; formNo?: string | null; title: string; slug: string; published: boolean; revision: number; description: string | null;
+  id: string;
+  formNo?: string | null;
+  revisionNo?: string | null;
+  revisionDate?: string | null;
+  title: string; slug: string; published: boolean; revision: number; description: string | null;
   periodUnit: "NONE" | "DAY" | "MONTH" | "YEAR"; periodValue: number; expectedSubmissions: number; invalidAlertEnabled: boolean;
   quotaQuestionId: string | null; quotaEntities: string[];
   questions: Array<{ id: string; type: QType; title: string; description: string | null; required: boolean; options: Opt[]; rows?: Row[]; showWhen: Q["showWhen"] }>;
@@ -90,7 +94,7 @@ export default function FormEditor() {
   const [activeTab, setActiveTab] = useState<"toolbox" | "controls" | "general">("toolbox");
 
   const [meta, setMeta] = useState<Omit<FormPayload, "questions">>({
-    id: "", formNo: "", title: "", slug: "", published: false, revision: 1, description: "",
+    id: "", formNo: "", revisionNo: "", revisionDate: null, title: "", slug: "", published: false, revision: 1, description: "",
     periodUnit: "NONE", periodValue: 1, expectedSubmissions: 1, invalidAlertEnabled: false,
     quotaQuestionId: null, quotaEntities: [],
   });
@@ -358,7 +362,9 @@ export default function FormEditor() {
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", color: "var(--muted)" }}>
             <span style={{ fontWeight: 500, color: "var(--primary)" }}>{meta.formNo?.trim() || `FRM-${meta.id.slice(-6).toUpperCase()}`}</span>
             <span>•</span>
-            <span>Rev: {meta.revision}</span>
+            <span>Rev: {(meta.revisionNo || "").trim() || "-"}</span>
+            <span>•</span>
+            <span>Tarih: {meta.revisionDate ? new Date(meta.revisionDate).toLocaleDateString("tr-TR") : "-"}</span>
             <span>•</span>
             <span style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
               <div style={{ width: 6, height: 6, borderRadius: "50%", background: meta.published ? "var(--success)" : "var(--danger)" }} />
@@ -434,6 +440,24 @@ export default function FormEditor() {
                   placeholder="Orn: FRM-2026-001"
                   value={meta.formNo || ""}
                   onChange={e => setMeta(m => ({ ...m, formNo: e.target.value }))}
+                />
+              </div>
+              <div style={{ marginBottom: "1rem" }}>
+                <label>Revizyon no (elle)</label>
+                <input
+                  className="input"
+                  placeholder="Orn: R0 / R1 / A / 01"
+                  value={meta.revisionNo || ""}
+                  onChange={e => setMeta(m => ({ ...m, revisionNo: e.target.value }))}
+                />
+              </div>
+              <div style={{ marginBottom: "1rem" }}>
+                <label>Revizyon tarihi</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={(meta.revisionDate || "").slice(0, 10)}
+                  onChange={e => setMeta(m => ({ ...m, revisionDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : null }))}
                 />
               </div>
               <div style={{ marginBottom: "1rem" }}>
