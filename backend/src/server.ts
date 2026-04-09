@@ -1021,8 +1021,26 @@ app.post("/api/public/forms/:slug/submit", async (req, res) => {
 
   const answers = body.data.answers;
   const invalidReasons: string[] = [];
+
+  const isVisibleByRule = (q: { showWhenJson: string | null }): boolean => {
+    if (!q.showWhenJson) return true;
+    try {
+      const rule = JSON.parse(q.showWhenJson) as { questionId?: string; optionIds?: string[] };
+      if (!rule?.questionId || !Array.isArray(rule.optionIds) || rule.optionIds.length === 0) return true;
+      const parentAnswer = answers[rule.questionId];
+      if (parentAnswer === undefined || parentAnswer === null || parentAnswer === "") return false;
+      const selected = Array.isArray(parentAnswer) ? parentAnswer : [parentAnswer];
+      const selectedSet = new Set(selected.map((x) => String(x)));
+      return rule.optionIds.some((id) => selectedSet.has(String(id)));
+    } catch {
+      // Kural bozuksa soruyu görünür kabul ederek mevcut davranışı koru.
+      return true;
+    }
+  };
+
   for (const q of form.questions) {
     if (!q.required) continue;
+    if (!isVisibleByRule(q)) continue; // Ekranda görünmeyen zorunlu soru gönderimi engellememeli.
     const v = answers[q.id];
     if (q.type === "GRID") {
       const rows = JSON.parse(q.rowsJson || "[]") as Array<{ id: string; label: string }>;
