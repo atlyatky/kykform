@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Eye, Pencil, QrCode, Rocket, Trash2, BarChart3, Plus, Database } from "lucide-react";
+import { Eye, Pencil, QrCode, Rocket, Trash2, BarChart3, Plus } from "lucide-react";
 import { api, apiBaseUrl, getToken } from "../api";
 import { BrandLogo } from "../components/BrandLogo";
 import { AdminHeaderActions } from "../components/AdminHeaderActions";
@@ -78,16 +78,6 @@ export default function FormList() {
     await load();
   }
 
-  async function copyExcelDataUrl(row: Row) {
-    const url = `${window.location.origin}/api/public/powerbi/forms/${row.slug}/submissions?limit=5000&key=POWERBI_API_KEY`;
-    try {
-      await navigator.clipboard.writeText(url);
-      alert("Excel/Power BI veri linki kopyalandı.");
-    } catch {
-      alert(`Link kopyalanamadı, elle kopyalayın:\n${url}`);
-    }
-  }
-
   return (
     <div className="layout">
       <header className="topbar">
@@ -148,9 +138,6 @@ export default function FormList() {
                         <button className="btn btn-icon" type="button" title="QR Kodu" onClick={() => setQrForm(f)}><QrCode size={16} /></button>
                         <Link className="btn btn-icon" to={`/forms/${f.id}/edit`} title="Düzenle"><Pencil size={16} /></Link>
                         <Link className="btn btn-icon" to={`/forms/${f.id}/dashboard`} title="Analiz"><BarChart3 size={16} /></Link>
-                        <button className="btn btn-icon" type="button" title="Excel/Power BI veri linki" onClick={() => void copyExcelDataUrl(f)}>
-                          <Database size={16} />
-                        </button>
                         <button className="btn btn-icon" type="button" title={f.published ? "Yayından Kaldır" : "Yayınla"} onClick={() => void togglePublish(f)}>
                           <Rocket size={16} color={f.published ? "var(--success)" : "var(--muted)"} />
                         </button>
