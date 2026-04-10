@@ -1,6 +1,6 @@
 ﻿import { prisma } from "./prisma.js";
 import { notify, type TeamsReportPayload } from "./notify.js";
-import { formatDateTimeTr, formatTimeTr } from "./datetime-tr.js";
+import { formatDateTimeTr, formatTimeTr, slaPeriodStart } from "./datetime-tr.js";
 
 function entityKeyFromAnswers(answers: Record<string, unknown>, qid: string): string {
   const raw = answers[qid];
@@ -34,17 +34,6 @@ type FlowAction = {
   subject?: string;
   messageTemplate?: string;
 };
-
-function periodStartByParts(unit: "DAY" | "MONTH" | "YEAR", value: number, now: Date): Date {
-  const v = Math.max(1, value);
-  if (unit === "DAY") {
-    const s = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    s.setUTCDate(s.getUTCDate() - (v - 1));
-    return s;
-  }
-  if (unit === "MONTH") return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (v - 1), 1));
-  return new Date(Date.UTC(now.getUTCFullYear() - (v - 1), 0, 1));
-}
 
 function shouldSendNow(lastFiredAt: Date | null, now: Date, hhmm: string | undefined): boolean {
   if (!lastFiredAt) return true;
@@ -91,7 +80,7 @@ async function runFlowRules(now: Date) {
     if (activeWeekdays.length > 0 && !activeWeekdays.includes(now.getDay())) continue;
     if (!shouldRunAtTime(now, condition.reportTime)) continue;
 
-    const start = periodStartByParts(condition.periodUnit, condition.periodValue, now);
+    const start = slaPeriodStart(condition.periodUnit, condition.periodValue, now);
     const subs = await prisma.submission.findMany({ where: { formId: rule.formId, createdAt: { gte: start } } });
     const entityQuestion = rule.form.questions.find((q) => q.id === condition.questionId);
     const optionLabelById = new Map<string, string>();
