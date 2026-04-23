@@ -163,8 +163,9 @@ const flowMissingQuotaConditionSchema = z.object({
 });
 const flowAnswerLabelMatchConditionSchema = z.object({
   kind: z.literal("ANSWER_LABEL_MATCH"),
-  questionIds: z.array(z.string()).min(1),
-  expectedLabel: z.string().min(1),
+  // Bos birakilirsa "her gonderimde rapor" gibi kosulsuz calisir.
+  questionIds: z.array(z.string()),
+  expectedLabel: z.string().optional().default(""),
   mode: z.enum(["ANY", "ALL"]).default("ANY"),
 });
 const flowConditionSchema = z.discriminatedUnion("kind", [
@@ -314,26 +315,29 @@ async function runSubmitFlowRules(params: {
     if (!action.emails.length) continue;
     if (condition.kind !== "ANSWER_LABEL_MATCH") continue;
 
-    const expected = normalizeText(condition.expectedLabel);
+    const expected = normalizeText(condition.expectedLabel ?? "");
+    const alwaysOnSubmit = condition.questionIds.length === 0 || !expected;
     const checks = condition.questionIds.map((qid) => {
       const q = questionById.get(qid);
       if (!q) return false;
       const labels = extractSelectedLabels(q, params.answers[qid]);
       return labels.some((label) => normalizeText(label) === expected);
     });
-    if (!checks.length) continue;
-
-    const matched = condition.mode === "ALL" ? checks.every(Boolean) : checks.some(Boolean);
+    const matched = alwaysOnSubmit
+      ? true
+      : (condition.mode === "ALL" ? checks.every(Boolean) : checks.some(Boolean));
     if (!matched) continue;
 
-    const subject = action.subject?.trim() || "Uygunsuzluk Girişi Yapılmıştır";
+    const subject = action.subject?.trim() || (alwaysOnSubmit ? "Form Gönderimi Alındı" : "Uygunsuzluk Girişi Yapılmıştır");
     const reportRows = params.form.questions
       .filter((q) => q.type !== "PAGE_BREAK")
       .map((q) => {
         const answer = formatAnswerForReport(q, params.answers[q.id]).replace(/\n+/g, " ").slice(0, 220);
         const selected = extractSelectedLabels(q, params.answers[q.id]).map((x) => normalizeText(x));
-        const isNonConforming = condition.questionIds.includes(q.id) && selected.includes(expected);
-        const durum = answer === "(bos)" ? "⚪ Boş" : isNonConforming ? "🔴 Uygunsuz" : "🟢 Uygun";
+        const isNonConforming = !alwaysOnSubmit && condition.questionIds.includes(q.id) && selected.includes(expected);
+        const durum = alwaysOnSubmit
+          ? (answer === "(bos)" ? "⚪ Boş" : "ℹ️ Bilgi")
+          : (answer === "(bos)" ? "⚪ Boş" : isNonConforming ? "🔴 Uygunsuz" : "🟢 Uygun");
         return [q.title || q.id, answer || "(boş)", durum] as [string, string, string];
       });
     const shownRows = reportRows.slice(0, 20);

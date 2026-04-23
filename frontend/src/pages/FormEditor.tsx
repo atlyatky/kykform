@@ -51,6 +51,15 @@ function newAnswerLabelRule(): FlowRule {
     action: { kind: "SEND_EMAIL", emails: [], subject: "", messageTemplate: "" },
   };
 }
+function newAlwaysSubmitRule(): FlowRule {
+  return {
+    name: "Her gönderimde rapor",
+    enabled: true,
+    trigger: "ON_SUBMIT",
+    condition: { kind: "ANSWER_LABEL_MATCH", questionIds: [], expectedLabel: "", mode: "ANY" },
+    action: { kind: "SEND_EMAIL", emails: [], subject: "Form Gönderimi Alındı", messageTemplate: "" },
+  };
+}
 function parseWebhookList(values: string[]): string[] {
   return values
     .join("\n")
@@ -253,6 +262,8 @@ export default function FormEditor() {
       const d = (rule.condition.weekdays ?? [1, 2, 3, 4, 5, 6]).map(weekdayLong).join(", ");
       return `${rule.condition.periodValue} ${periodText(rule.condition.periodUnit)} "${qTitle}" sorusundaki secili her varlik icin 1 kayit bekle; ${d} gunlerinde saat ${rule.condition.reportTime ?? "09:00"}'da eksikleri ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildir.`;
     }
+    const always = (rule.condition.questionIds ?? []).length === 0 || !(rule.condition.expectedLabel ?? "").trim();
+    if (always) return `Form her gönderildiğinde ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine form raporu gönder.`;
     const names = rule.condition.questionIds.map((id) => questionTitleById.get(id) ?? "isimsiz soru").join(", ");
     return `"${names || "soru seçin"}" sorularında "${rule.condition.expectedLabel || "değer"}" ${rule.condition.mode === "ALL" ? "hepsinde" : "en az birinde"} seçilirse ${parseWebhookList(rule.action.emails ?? []).length} webhook adresine bildirim at.`;
   };
@@ -286,16 +297,19 @@ export default function FormEditor() {
     };
 
     if (rule.condition.kind === "ANSWER_LABEL_MATCH") {
+      const always = (rule.condition.questionIds ?? []).length === 0 || !(rule.condition.expectedLabel ?? "").trim();
       const now = new Date();
       const questionRows = visibleQuestions.map((q) => {
         const preview = renderQuestionPreview(q);
         const chosen = preview.find((x) => x.startsWith("🔴") || x.startsWith("🟢")) ?? preview[0] ?? "⚪ (bos)";
-        const durum = chosen.startsWith("🔴") ? "🔴 Uygunsuz" : chosen.startsWith("⚪") ? "⚪ Bos" : "🟢 Uygun";
+        const durum = always
+          ? (chosen.startsWith("⚪") ? "⚪ Bos" : "ℹ️ Bilgi")
+          : (chosen.startsWith("🔴") ? "🔴 Uygunsuz" : chosen.startsWith("⚪") ? "⚪ Bos" : "🟢 Uygun");
         const yanit = chosen.replace(/^([🔴🟢⚪])\s*/, "");
         return `| ${q.title || "İsimsiz soru"} | ${yanit} | ${durum} |`;
       });
       return {
-        subject: "Uygunsuzluk Girişi Yapılmıştır",
+        subject: always ? "Form Gönderimi Alındı" : "Uygunsuzluk Girişi Yapılmıştır",
         message: [
           "| Alan | Deger |",
           "|---|---|",
@@ -475,7 +489,7 @@ export default function FormEditor() {
             <div className="editor-sidebar-section">
               <div className="editor-sidebar-title">Kurallar &amp; bildirim</div>
               <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "-0.5rem 0 1rem 0", lineHeight: 1.45 }}>
-                İki kural tipi var: <strong style={{ color: "var(--text)" }}>Doldurulmadı (saatli günlük rapor)</strong> ve <strong style={{ color: "var(--text)" }}>Uygunsuz Şık (anlık)</strong>.
+                Kural tipleri: <strong style={{ color: "var(--text)" }}>Doldurulmadı (saatli günlük rapor)</strong>, <strong style={{ color: "var(--text)" }}>Uygunsuz Şık (anlık)</strong> ve <strong style={{ color: "var(--text)" }}>Her Gönderimde Rapor</strong>.
               </p>
 
               <div style={{ padding: "1rem", background: "var(--surface2)", borderRadius: "8px", border: "1px solid var(--border)" }}>
@@ -484,6 +498,7 @@ export default function FormEditor() {
                   <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
                     <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newMissingQuotaRule()])}><Plus size={14} /> Doldurulmadı</button>
                     <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newAnswerLabelRule()])}><Plus size={14} /> Uygunsuz Şık</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => setFlowRules((r) => [...r, newAlwaysSubmitRule()])}><Plus size={14} /> Her Gönderimde</button>
                   </div>
                 </div>
 
@@ -601,7 +616,9 @@ export default function FormEditor() {
                       </div>
                     ) : (
                       <div style={{ display: "grid", gap: "0.5rem" }}>
-                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Uygunsuz şık seçilirse gönderim anında form raporunu webhooka atar.</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>
+                          Uygunsuz şık seçilirse gönderim anında rapor atar. <strong style={{ color: "var(--text)" }}>Sorular + etiket boş bırakılırsa her gönderimde rapor gönderir.</strong>
+                        </div>
                         <label style={{ fontSize: "0.85rem" }}>Sorular</label>
                         <div style={{ maxHeight: 120, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem" }}>
                           {eligibleChoiceQuestions.length === 0 && <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Önce tekli/çoklu seçim sorusu ekleyin.</div>}
@@ -621,7 +638,7 @@ export default function FormEditor() {
                             </label>
                           ))}
                         </div>
-                        <input className="input" value={rule.condition.expectedLabel} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i && x.condition.kind === "ANSWER_LABEL_MATCH" ? { ...x, condition: { ...x.condition, expectedLabel: e.target.value } } : x))} placeholder="Aranacak şık metni (örn: Ciddi risk)" />
+                        <input className="input" value={rule.condition.expectedLabel} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i && x.condition.kind === "ANSWER_LABEL_MATCH" ? { ...x, condition: { ...x.condition, expectedLabel: e.target.value } } : x))} placeholder="Aranacak şık metni (boş = her gönderimde)" />
                         <select className="input" value={rule.condition.mode} onChange={(e) => setFlowRules((arr) => arr.map((x, idx) => idx === i && x.condition.kind === "ANSWER_LABEL_MATCH" ? { ...x, condition: { ...x.condition, mode: e.target.value as "ANY" | "ALL" } } : x))}>
                           <option value="ANY">En az bir soruda seçilirse</option>
                           <option value="ALL">Tüm seçili sorularda seçilirse</option>
