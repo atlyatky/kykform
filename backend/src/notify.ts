@@ -191,7 +191,8 @@ export async function sendTeams(webhookUrl: string, subject: string, body: strin
   });
   if (!res.ok) {
     const raw = await res.text().catch(() => "");
-    throw new Error(`Teams webhook hata: ${res.status} ${res.statusText}${raw ? ` | ${raw}` : ""}`);
+    // Bildirim hatası uygulamayı düşürmemeli; sadece logla.
+    console.error(`Teams webhook hata: ${res.status} ${res.statusText}${raw ? ` | ${raw}` : ""}`);
   }
 }
 
@@ -201,5 +202,5 @@ export async function notify(webhookUrls: string[], subject: string, body: strin
   );
   if (targets.length === 0 && DEFAULT_TEAMS_WEBHOOK_URL) targets.push(DEFAULT_TEAMS_WEBHOOK_URL);
   if (targets.length === 0) return;
-  await Promise.all(targets.map((url) => sendTeams(url, subject, body)));
+  await Promise.allSettled(targets.map((url) => sendTeams(url, subject, body)));
 }
