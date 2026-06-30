@@ -6,6 +6,7 @@ import FormList from "./pages/FormList";
 import FirewallPage from "./pages/FirewallPage";
 import Login from "./pages/Login";
 import PublicForm from "./pages/PublicForm";
+import ReportsPage from "./pages/ReportsPage";
 import UsersPage from "./pages/UsersPage";
 
 function Protected({ element }: { element: JSX.Element }) {
@@ -24,6 +25,7 @@ export default function App() {
       <Route path="/" element={<Protected element={<FormList />} />} />
       <Route path="/forms/:id/edit" element={<Protected element={<FormEditor />} />} />
       <Route path="/forms/:id/dashboard" element={<Protected element={<FormDashboard />} />} />
+      <Route path="/raporlar" element={<Protected element={<ReportsPage />} />} />
       <Route path="/users" element={<AdminOnly element={<UsersPage />} />} />
       <Route path="/firewall" element={<AdminOnly element={<FirewallPage />} />} />
       <Route path="*" element={<Navigate to="/" replace />} />

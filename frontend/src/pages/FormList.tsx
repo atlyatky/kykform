@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Eye, Pencil, QrCode, Rocket, Trash2, BarChart3, Plus } from "lucide-react";
+import { Eye, Pencil, QrCode, Rocket, Trash2, BarChart3, Plus, ClipboardList } from "lucide-react";
 import { api, apiBaseUrl, getToken } from "../api";
 import { BrandLogo } from "../components/BrandLogo";
 import { AdminHeaderActions } from "../components/AdminHeaderActions";
@@ -83,6 +83,9 @@ export default function FormList() {
       <header className="topbar">
         <BrandLogo />
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <Link className="btn" to="/raporlar" title="Günlük raporlar">
+            <ClipboardList size={16} /> Raporlar
+          </Link>
           <div className="badge">Form Merkezi</div>
           <AdminHeaderActions />
         </div>

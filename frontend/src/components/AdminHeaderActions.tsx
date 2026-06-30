@@ -69,6 +69,7 @@ export function AdminHeaderActions() {
             }}
           >
             {menuItem("/", "Form listesi")}
+            {menuItem("/raporlar", "Raporlar")}
             {isAdminToken() && menuItem("/users", "Kullanıcılar")}
             {isAdminToken() && menuItem("/firewall", "Firewall")}
           </div>

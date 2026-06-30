@@ -8,6 +8,8 @@ import { hashPassword, signToken, verifyPassword, verifyToken } from "./auth.js"
 import { notify, type TeamsReportPayload } from "./notify.js";
 import { formatDateTr, formatTimeTr } from "./datetime-tr.js";
 import { prisma } from "./prisma.js";
+import { sendMail } from "./mail.js";
+import { buildDailyReports, formatDailyReportEmailText } from "./reporting.js";
 import { runSlaCheckOnce } from "./sla.js";
 
 const app = express();
@@ -753,6 +755,31 @@ app.put("/api/forms/:id/flows", authMiddleware, requireAuth, async (req, res) =>
       lastFiredAt: r.lastFiredAt,
     }))
   );
+});
+
+app.get("/api/reports/daily", authMiddleware, requireAuth, async (req, res) => {
+  if (await denyIfBlocked(req, res, "HOME")) return;
+  const date = typeof req.query.date === "string" ? req.query.date : undefined;
+  const payload = await buildDailyReports(date);
+  res.json(payload);
+});
+
+app.post("/api/reports/daily/email", authMiddleware, requireAuth, async (req, res) => {
+  if (await denyIfBlocked(req, res, "HOME")) return;
+  const body = z
+    .object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      recipients: z.array(z.string().email()).min(1),
+      subject: z.string().optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: "Geçersiz e-posta isteği" });
+  const payload = await buildDailyReports(body.data.date);
+  const text = formatDailyReportEmailText(payload);
+  const subject =
+    body.data.subject?.trim() || `KYK Günlük Kontrol Raporu — ${payload.dateLabel}`;
+  await sendMail(body.data.recipients, subject, text);
+  res.json({ ok: true, recipients: body.data.recipients.length, date: payload.date });
 });
 
 app.post("/api/notify/test", authMiddleware, requireAuth, async (req, res) => {
